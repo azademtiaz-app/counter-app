@@ -1772,13 +1772,13 @@ export default function App() {
         </AnimatePresence>
 
         {/* App Footer */}
-        <div className="mt-12 mb-8 flex flex-col items-center gap-4 print:mt-4 print:mb-0">
-          <div className="h-px w-24 bg-gradient-to-r from-transparent via-slate-300 to-transparent print:hidden" />
+        <div className="mt-12 mb-8 flex flex-col items-center gap-4 print:hidden">
+          <div className="h-px w-24 bg-gradient-to-r from-transparent via-slate-300 to-transparent" />
           <div className="text-center">
-            <div className="font-signature text-2xl text-slate-600 mb-1 print:text-lg">
+            <div className="font-signature text-2xl text-slate-600 mb-1">
               E. Azad
             </div>
-            <div className="text-[8px] font-bold text-slate-300 uppercase tracking-widest print:text-[6px]">
+            <div className="text-[8px] font-bold text-slate-300 uppercase tracking-widest">
               Financial Reporting System v2.0
             </div>
           </div>
