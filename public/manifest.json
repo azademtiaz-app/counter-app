@@ -1,0 +1,17 @@
+{
+  "name": "Daily Finance Report",
+  "short_name": "Finance Report",
+  "description": "A clean and simple financial reporting tool for daily cash and outlet management.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#4f46e5",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
