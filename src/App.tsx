@@ -37,7 +37,7 @@ import * as XLSX from 'xlsx';
 import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
 import { QRCodeSVG } from 'qrcode.react';
-import { format } from 'date-fns';
+import { format, parseISO, parse } from 'date-fns';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
@@ -105,7 +105,7 @@ interface AppState {
 
 const initialState: AppState = {
   headerNote: '',
-  date: new Date().toISOString().split('T')[0],
+  date: format(new Date(), 'yyyy-MM-dd'),
   cashRows: [
     { id: '1', denomination: 1000, qty: 0 },
     { id: '2', denomination: 500, qty: 0 },
@@ -221,6 +221,7 @@ export default function App() {
   const [showHistory, setShowHistory] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const reportRef = useRef<HTMLDivElement>(null);
+  const dateInputRef = useRef<HTMLInputElement>(null);
 
   // Keyboard Shortcuts for Undo/Redo
   useEffect(() => {
@@ -271,7 +272,9 @@ export default function App() {
       try {
         const parsedDraft = JSON.parse(draft);
         if (parsedDraft.cashRows) {
-          setState(parsedDraft);
+          // Always update date to today on mount to satisfy "auto change with local time"
+          const today = format(new Date(), 'yyyy-MM-dd');
+          setState({ ...parsedDraft, date: today });
         }
       } catch (e) {}
     }
@@ -1020,7 +1023,9 @@ export default function App() {
                           </div>
                           <div>
                             <h4 className="font-black text-slate-900 uppercase tracking-widest">{report.headerNote || 'Untitled Report'}</h4>
-                            <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">{report.date}</p>
+                            <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">
+                              {report.date ? format(parseISO(report.date), 'd MMMM yyyy') : 'No Date'}
+                            </p>
                           </div>
                         </div>
                         <div className="flex items-center gap-3">
@@ -1092,21 +1097,44 @@ export default function App() {
                     <div className="flex items-center justify-center gap-6 text-[10px] font-black text-slate-300 uppercase tracking-[0.3em] print:gap-2">
                       <div className="h-px w-12 bg-slate-100 print:hidden" />
                       <div className="relative group">
-                        <input
-                          type="date"
-                          className="absolute inset-0 opacity-0 cursor-pointer z-10"
-                          value={state.date}
-                          onChange={(e) => updateState(prev => ({ ...prev, date: e.target.value }))}
-                        />
-                        <div className="flex items-center gap-4 px-8 py-4 bg-white border-2 border-slate-100 rounded-3xl shadow-sm group-hover:border-indigo-200 transition-all print:border-none print:shadow-none print:px-0 print:py-0">
+                        {/* The "Pretty" UI (Underneath) */}
+                        <div 
+                          onClick={() => {
+                            try {
+                              dateInputRef.current?.showPicker();
+                            } catch (e) {
+                              // Fallback for browsers that don't support showPicker()
+                              dateInputRef.current?.click();
+                            }
+                          }}
+                          className="flex items-center gap-4 px-8 py-4 bg-white border-2 border-slate-100 rounded-3xl shadow-sm group-hover:border-indigo-200 transition-all cursor-pointer print:border-none print:shadow-none print:px-0 print:py-0"
+                        >
                           <div className="p-2 bg-indigo-50 rounded-xl text-indigo-600 print:hidden">
                             <Calendar size={20} />
                           </div>
-                          <span className="text-base font-black text-slate-900 tracking-tight print:text-sm">
-                            {state.date ? format(new Date(state.date), 'EEEE, d MMMM yyyy') : 'Select Date'}
+                          <span className="text-base font-black text-slate-900 tracking-tight print:text-sm whitespace-nowrap">
+                            {state.date ? format(parse(state.date, 'yyyy-MM-dd', new Date()), 'EEEE, d MMMM yyyy') : 'Select Date'}
                           </span>
                         </div>
+                        
+                        {/* The actual native input (Invisible but clickable on top) */}
+                        <input
+                          ref={dateInputRef}
+                          type="date"
+                          className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-30"
+                          value={state.date}
+                          onChange={(e) => updateState(prev => ({ ...prev, date: e.target.value }))}
+                        />
                       </div>
+                      
+                      <button 
+                        onClick={() => updateState(prev => ({ ...prev, date: format(new Date(), 'yyyy-MM-dd') }))}
+                        className="p-2.5 bg-white border-2 border-slate-100 rounded-2xl text-indigo-600 hover:border-indigo-200 hover:bg-indigo-50 transition-all shadow-sm print:hidden"
+                        title="Set to Today"
+                      >
+                        <RotateCcw size={18} />
+                      </button>
+
                       <div className="h-px w-12 bg-slate-100 print:hidden" />
                     </div>
                   </div>
