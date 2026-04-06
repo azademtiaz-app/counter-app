@@ -190,6 +190,13 @@ const EditableTableLabel = ({
   );
 };
 
+const generateId = () => {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+};
+
 export default function App() {
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
 
@@ -272,9 +279,15 @@ export default function App() {
       try {
         const parsedDraft = JSON.parse(draft);
         if (parsedDraft.cashRows) {
-          // Always update date to today on mount to satisfy "auto change with local time"
-          const today = format(new Date(), 'yyyy-MM-dd');
-          setState({ ...parsedDraft, date: today });
+          // Merge with initialState to ensure all properties (like config) exist
+          // even if the draft was saved with an older version of the app.
+          const mergedState = {
+            ...initialState,
+            ...parsedDraft,
+            // Always update date to today on mount to satisfy "auto change with local time"
+            date: format(new Date(), 'yyyy-MM-dd')
+          };
+          setState(mergedState);
         }
       } catch (e) {}
     }
@@ -290,7 +303,7 @@ export default function App() {
     setTimeout(() => {
       const reportData = {
         ...state,
-        id: state.id || crypto.randomUUID(),
+        id: state.id || generateId(),
         updatedAt: new Date().toISOString()
       };
 
@@ -382,7 +395,7 @@ export default function App() {
   };
 
   const addCashRow = (count: number = 1) => {
-    const newRows = Array.from({ length: count }, () => ({ id: crypto.randomUUID(), denomination: 0, qty: 0 }));
+    const newRows = Array.from({ length: count }, () => ({ id: generateId(), denomination: 0, qty: 0 }));
     updateState(prev => ({
       ...prev,
       cashRows: [...prev.cashRows, ...newRows]
@@ -390,7 +403,7 @@ export default function App() {
   };
 
   const addExtraRow = (count: number = 1) => {
-    const newRows = Array.from({ length: count }, () => ({ id: crypto.randomUUID(), label: '', qty: 0, amount: 0 }));
+    const newRows = Array.from({ length: count }, () => ({ id: generateId(), label: '', qty: 0, amount: 0 }));
     updateState(prev => ({
       ...prev,
       extraRows: [...prev.extraRows, ...newRows]
@@ -398,7 +411,7 @@ export default function App() {
   };
 
   const addOutletRow = (count: number = 1) => {
-    const newRows = Array.from({ length: count }, () => ({ id: crypto.randomUUID(), name: '', amount: 0 }));
+    const newRows = Array.from({ length: count }, () => ({ id: generateId(), name: '', amount: 0 }));
     updateState(prev => ({
       ...prev,
       outletRows: [...prev.outletRows, ...newRows]
@@ -408,14 +421,14 @@ export default function App() {
   const addSignatureRow = () => {
     updateState(prev => ({
       ...prev,
-      signatureRows: [...prev.signatureRows, { id: crypto.randomUUID(), name: '', designation: '' }]
+      signatureRows: [...prev.signatureRows, { id: generateId(), name: '', designation: '' }]
     }));
   };
 
   const addNoteRow = () => {
     updateState(prev => ({
       ...prev,
-      noteRows: [...prev.noteRows, { id: crypto.randomUUID(), text: '' }]
+      noteRows: [...prev.noteRows, { id: generateId(), text: '' }]
     }));
   };
 
@@ -442,7 +455,7 @@ export default function App() {
     updateState(prev => {
       const existing = prev.cashRows.map(r => r.denomination);
       const toAdd = standards.filter(d => !existing.includes(d));
-      const newRows = toAdd.map(d => ({ id: crypto.randomUUID(), denomination: d, qty: 0 }));
+      const newRows = toAdd.map(d => ({ id: generateId(), denomination: d, qty: 0 }));
       return {
         ...prev,
         cashRows: [...prev.cashRows, ...newRows].sort((a, b) => b.denomination - a.denomination)
