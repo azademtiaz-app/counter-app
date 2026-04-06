@@ -1170,8 +1170,8 @@ export default function App() {
                             <table className="w-full text-sm text-left">
                               <thead className="bg-slate-50 text-slate-500 uppercase text-[9px] tracking-[0.2em] font-black border-b border-slate-100">
                                 <tr>
-                                  <th className="px-6 py-5 print:py-1 w-[35%]">Note</th>
-                                  <th className="px-6 py-5 text-center print:py-1 w-[20%]">Qty</th>
+                                  <th className="px-6 py-5 print:py-1 w-[30%]">Note</th>
+                                  <th className="px-6 py-5 text-center print:py-1 w-[25%]">Qty</th>
                                   <th className="px-6 py-5 text-right print:py-1 w-[45%]">Total</th>
                                   <th className="w-10"></th>
                                 </tr>
@@ -1200,9 +1200,9 @@ export default function App() {
                                 }}
                               />
                             </td>
-                            <td className="px-6 py-4 text-center print:py-1">
+                            <td className="px-4 py-4 text-center print:py-1">
                               <MathInput 
-                                className="nav-input w-full max-w-[100px] mx-auto text-center bg-white border border-slate-100 rounded-xl py-1.5 focus:border-indigo-400 focus:outline-none font-mono font-bold text-slate-900 shadow-sm print:bg-transparent print:border-none print:shadow-none"
+                                className="nav-input w-full max-w-[140px] mx-auto text-center bg-white border border-slate-100 rounded-xl py-1.5 focus:border-indigo-400 focus:outline-none font-mono font-bold text-slate-900 shadow-sm print:bg-transparent print:border-none print:shadow-none"
                                 value={row.qty || ''}
                                 showCommas={false}
                                 onChange={(val) => {
