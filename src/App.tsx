@@ -206,6 +206,14 @@ export default function App() {
       setDeferredPrompt(e);
     };
     window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+
+    // Emergency Reset: if URL has ?reset=true, clear localStorage and reload
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get('reset') === 'true') {
+      localStorage.clear();
+      window.location.href = window.location.pathname;
+    }
+
     return () => window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
   }, []);
 
@@ -708,12 +716,13 @@ export default function App() {
     type?: "number" | "text",
     showCommas?: boolean
   }) => {
-    const [localValue, setLocalValue] = useState(value.toString());
+    const [localValue, setLocalValue] = useState((value || '').toString());
     const [isFocused, setIsFocused] = useState(false);
 
     useEffect(() => {
       if (!isFocused) {
-        setLocalValue(typeof value === 'number' ? (showCommas ? value.toLocaleString('en-IN') : value.toString()) : value.toString());
+        const safeValue = value ?? 0;
+        setLocalValue(typeof safeValue === 'number' ? (showCommas ? safeValue.toLocaleString('en-IN') : safeValue.toString()) : safeValue.toString());
       }
     }, [value, isFocused, showCommas]);
 
@@ -1126,7 +1135,24 @@ export default function App() {
                             <Calendar size={20} />
                           </div>
                           <span className="text-base font-black text-slate-900 tracking-tight print:text-sm whitespace-nowrap">
-                            {state.date ? format(parse(state.date, 'yyyy-MM-dd', new Date()), 'EEEE, d MMMM yyyy') : 'Select Date'}
+                            {(() => {
+                              if (!state.date) return 'Select Date';
+                              try {
+                                // Try parsing as yyyy-MM-dd
+                                const parsed = parse(state.date, 'yyyy-MM-dd', new Date());
+                                if (isNaN(parsed.getTime())) throw new Error('Invalid');
+                                return format(parsed, 'EEEE, d MMMM yyyy');
+                              } catch (e) {
+                                try {
+                                  // Fallback to parseISO if it's an old ISO string
+                                  const parsed = parseISO(state.date);
+                                  if (isNaN(parsed.getTime())) throw new Error('Invalid');
+                                  return format(parsed, 'EEEE, d MMMM yyyy');
+                                } catch (e2) {
+                                  return state.date;
+                                }
+                              }
+                            })()}
                           </span>
                         </div>
                         
