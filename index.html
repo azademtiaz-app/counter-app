@@ -9,7 +9,14 @@
     <title>Daily Finance Report</title>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; font-family: sans-serif; color: #64748b; text-align: center; padding: 20px;">
+        <div style="width: 40px; height: 40px; border: 3px solid #f1f5f9; border-top: 3px solid #4f46e5; border-radius: 50%; animation: spin 1s linear infinite; margin-bottom: 20px;"></div>
+        <style>@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }</style>
+        <p>Loading application...</p>
+        <p style="font-size: 12px; margin-top: 10px;">If the page stays blank, <a href="/?reset=true" style="color: #4f46e5; text-decoration: underline;">click here to reset</a>.</p>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

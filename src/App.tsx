@@ -286,18 +286,31 @@ export default function App() {
     if (draft) {
       try {
         const parsedDraft = JSON.parse(draft);
-        if (parsedDraft.cashRows) {
-          // Merge with initialState to ensure all properties (like config) exist
-          // even if the draft was saved with an older version of the app.
+        if (parsedDraft && typeof parsedDraft === 'object') {
+          // Deep merge config to ensure all properties exist
+          const mergedConfig = {
+            ...initialState.config,
+            ...(parsedDraft.config || {})
+          };
+          
           const mergedState = {
             ...initialState,
             ...parsedDraft,
+            config: mergedConfig,
+            // Ensure rows are arrays
+            cashRows: Array.isArray(parsedDraft.cashRows) ? parsedDraft.cashRows : initialState.cashRows,
+            extraRows: Array.isArray(parsedDraft.extraRows) ? parsedDraft.extraRows : initialState.extraRows,
+            outletRows: Array.isArray(parsedDraft.outletRows) ? parsedDraft.outletRows : initialState.outletRows,
+            signatureRows: Array.isArray(parsedDraft.signatureRows) ? parsedDraft.signatureRows : initialState.signatureRows,
+            noteRows: Array.isArray(parsedDraft.noteRows) ? parsedDraft.noteRows : initialState.noteRows,
             // Always update date to today on mount to satisfy "auto change with local time"
             date: format(new Date(), 'yyyy-MM-dd')
           };
           setState(mergedState);
         }
-      } catch (e) {}
+      } catch (e) {
+        console.error("Failed to load draft:", e);
+      }
     }
   }, []);
 
