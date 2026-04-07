@@ -1345,17 +1345,19 @@ export default function App() {
                     
                     <div className="flex items-center justify-center gap-6 text-[10px] font-black text-slate-300 uppercase tracking-[0.3em] print:gap-2">
                       <div className="h-px w-12 bg-slate-100 print:hidden" />
-                      <div className="relative group">
+                      <div 
+                        className="relative group"
+                        onClick={() => {
+                          try {
+                            dateInputRef.current?.showPicker();
+                          } catch (e) {
+                            // Fallback for browsers that don't support showPicker()
+                            dateInputRef.current?.click();
+                          }
+                        }}
+                      >
                         {/* The "Pretty" UI (Underneath) */}
                         <div 
-                          onClick={() => {
-                            try {
-                              dateInputRef.current?.showPicker();
-                            } catch (e) {
-                              // Fallback for browsers that don't support showPicker()
-                              dateInputRef.current?.click();
-                            }
-                          }}
                           className="flex items-center gap-4 px-8 py-4 bg-white border-2 border-slate-100 rounded-3xl shadow-sm group-hover:border-indigo-200 transition-all cursor-pointer print:border-none print:shadow-none print:px-0 print:py-0"
                         >
                           <div className="p-2 bg-indigo-50 rounded-xl text-indigo-600 print:hidden">
@@ -1387,7 +1389,7 @@ export default function App() {
                         <input
                           ref={dateInputRef}
                           type="date"
-                          className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-30"
+                          className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-50"
                           value={state.date}
                           onChange={(e) => updateState(prev => ({ ...prev, date: e.target.value }))}
                         />
