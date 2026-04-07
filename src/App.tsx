@@ -14,7 +14,6 @@ import {
   FileText,
   Calendar,
   Printer,
-  FileSpreadsheet,
   Save,
   FileUp,
   FileDown,
@@ -33,13 +32,27 @@ import {
   Search
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import * as XLSX from 'xlsx';
 import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
 import { QRCodeSVG } from 'qrcode.react';
 import { format, parseISO, parse } from 'date-fns';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import { 
+  Document, 
+  Packer, 
+  Paragraph, 
+  Table, 
+  TableRow, 
+  TableCell, 
+  WidthType, 
+  AlignmentType, 
+  BorderStyle, 
+  TextRun,
+  VerticalAlign,
+  ImageRun
+} from 'docx';
+import { saveAs } from 'file-saver';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -600,20 +613,53 @@ export default function App() {
     
     try {
       const canvas = await html2canvas(reportRef.current, {
-        scale: 2,
+        scale: 3, // Higher scale for better quality
         useCORS: true,
-        logging: true,
-        backgroundColor: '#ffffff'
+        logging: false,
+        backgroundColor: '#ffffff',
+        windowWidth: 1200, // Fixed width for consistent layout
+        onclone: (clonedDoc) => {
+          const report = clonedDoc.querySelector('[data-report-container]') as HTMLElement;
+          if (report) {
+            report.style.borderRadius = '0';
+            report.style.boxShadow = 'none';
+            report.style.border = 'none';
+            
+            // Force 2 columns for the grid in export
+            const grid = report.querySelector('.grid') as HTMLElement;
+            if (grid) {
+              grid.style.display = 'grid';
+              grid.style.gridTemplateColumns = 'repeat(2, minmax(0, 1fr))';
+              grid.style.gap = '1.5rem';
+            }
+
+            // Find all elements that should be hidden in print/export
+            const toHide = report.querySelectorAll('.print\\:hidden');
+            toHide.forEach(el => (el as HTMLElement).style.display = 'none');
+
+            // Adjust paddings and margins to match print feel
+            const header = report.querySelector('.p-12');
+            if (header) (header as HTMLElement).style.padding = '2rem 1rem';
+          }
+        }
       });
       
       const imgData = canvas.toDataURL('image/png');
       const pdf = new jsPDF({
         orientation: 'portrait',
         unit: 'px',
-        format: [canvas.width / 2, canvas.height / 2]
+        format: 'a4'
       });
+
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const pdfHeight = pdf.internal.pageSize.getHeight();
+      const imgWidth = canvas.width;
+      const imgHeight = canvas.height;
+      const ratio = Math.min(pdfWidth / imgWidth, pdfHeight / imgHeight);
+      const finalWidth = imgWidth * ratio;
+      const finalHeight = imgHeight * ratio;
       
-      pdf.addImage(imgData, 'PNG', 0, 0, canvas.width / 2, canvas.height / 2);
+      pdf.addImage(imgData, 'PNG', (pdfWidth - finalWidth) / 2, 20, finalWidth, finalHeight);
       pdf.save(`Cash_Report_${state.date}.pdf`);
     } catch (e) {
       console.error('PDF generation failed:', e);
@@ -621,49 +667,216 @@ export default function App() {
     }
   };
 
-  const handleSaveExcel = () => {
-    const cashData = state.cashRows.map(row => ({
-      'Type': 'Note',
-      'Label/Value': row.denomination,
-      'Quantity': row.qty,
-      'Total': row.denomination * row.qty
+  const handleSaveWord = async () => {
+    const children: any[] = [];
+
+    // Logo
+    if (state.logo) {
+      try {
+        const logoBase64 = state.logo.split(',')[1];
+        const binaryString = window.atob(logoBase64);
+        const bytes = new Uint8Array(binaryString.length);
+        for (let i = 0; i < binaryString.length; i++) {
+          bytes[i] = binaryString.charCodeAt(i);
+        }
+
+        children.push(new Paragraph({
+          alignment: AlignmentType.CENTER,
+          children: [
+            new ImageRun({
+              data: bytes,
+              transformation: {
+                width: 180, // Increased size
+                height: 75,
+              },
+            } as any),
+          ],
+        }));
+        children.push(new Paragraph({ text: "" })); // Spacer
+      } catch (e) {
+        console.error('Failed to add logo to Word:', e);
+      }
+    }
+
+    // Header
+    children.push(new Paragraph({
+      alignment: AlignmentType.CENTER,
+      children: [
+        new TextRun({
+          text: state.headerNote || 'Daily Finance Report',
+          bold: true,
+          size: 32,
+          allCaps: true
+        })
+      ]
     }));
 
-    const extraData = state.extraRows.map(row => ({
-      'Type': 'Extra Row',
-      'Label/Value': row.label,
-      'Quantity': row.qty,
-      'Total': row.amount
+    children.push(new Paragraph({
+      alignment: AlignmentType.CENTER,
+      children: [
+        new TextRun({
+          text: state.date ? format(parse(state.date, 'yyyy-MM-dd', new Date()), 'EEEE, d MMMM yyyy') : 'N/A',
+          bold: true,
+          size: 24,
+          allCaps: true
+        })
+      ]
     }));
 
-    const outletData = state.outletRows.map(row => ({
-      [state.config.outletColumnLabel || 'Outlet Name']: row.name,
-      'Amount': row.amount
+    children.push(new Paragraph({ text: "" })); // Spacer
+
+    // Main Content Table
+    children.push(new Table({
+      width: { size: 100, type: WidthType.PERCENTAGE },
+      borders: {
+        top: { style: BorderStyle.NONE },
+        bottom: { style: BorderStyle.NONE },
+        left: { style: BorderStyle.NONE },
+        right: { style: BorderStyle.NONE },
+        insideHorizontal: { style: BorderStyle.NONE },
+        insideVertical: { style: BorderStyle.NONE },
+      },
+      rows: [
+        new TableRow({
+          children: [
+            // Left Column: Cash
+            new TableCell({
+              width: { size: 55, type: WidthType.PERCENTAGE },
+              children: [
+                new Paragraph({ text: "CASH", children: [new TextRun({ bold: true, size: 18 })] }),
+                new Table({
+                  width: { size: 100, type: WidthType.PERCENTAGE },
+                  rows: [
+                    new TableRow({
+                      children: [
+                        new TableCell({ children: [new Paragraph({ text: "NOTE", alignment: AlignmentType.CENTER, children: [new TextRun({ bold: true })] })] }),
+                        new TableCell({ children: [new Paragraph({ text: "QTY", alignment: AlignmentType.CENTER, children: [new TextRun({ bold: true })] })] }),
+                        new TableCell({ children: [new Paragraph({ text: "TOTAL", alignment: AlignmentType.CENTER, children: [new TextRun({ bold: true })] })] }),
+                      ]
+                    }),
+                    ...state.cashRows.map(r => new TableRow({
+                      children: [
+                        new TableCell({ children: [new Paragraph({ text: r.denomination.toString(), alignment: AlignmentType.CENTER })] }),
+                        new TableCell({ children: [new Paragraph({ text: r.qty?.toString() || "", alignment: AlignmentType.CENTER })] }),
+                        new TableCell({ children: [new Paragraph({ text: (r.denomination * (r.qty || 0)).toString() || "0", alignment: AlignmentType.RIGHT })] }),
+                      ]
+                    })),
+                    new TableRow({
+                      children: [
+                        new TableCell({ children: [new Paragraph({ text: "CASH TOTAL", children: [new TextRun({ bold: true })] })] }),
+                        new TableCell({ children: [new Paragraph({ text: "" })] }),
+                        new TableCell({ children: [new Paragraph({ text: cashTotal.toString(), alignment: AlignmentType.RIGHT, children: [new TextRun({ bold: true })] })] }),
+                      ]
+                    }),
+                    ...state.extraRows.map(r => new TableRow({
+                      children: [
+                        new TableCell({ children: [new Paragraph({ text: r.label || "Voucher" })] }),
+                        new TableCell({ children: [new Paragraph({ text: r.qty?.toString() || "", alignment: AlignmentType.CENTER })] }),
+                        new TableCell({ children: [new Paragraph({ text: r.amount.toString(), alignment: AlignmentType.RIGHT })] }),
+                      ]
+                    })),
+                    new TableRow({
+                      children: [
+                        new TableCell({ children: [new Paragraph({ text: "GRAND TOTAL", children: [new TextRun({ bold: true })] })] }),
+                        new TableCell({ children: [new Paragraph({ text: "" })] }),
+                        new TableCell({ children: [new Paragraph({ text: grandTotal.toString(), alignment: AlignmentType.RIGHT, children: [new TextRun({ bold: true })] })] }),
+                      ]
+                    }),
+                  ]
+                })
+              ]
+            }),
+            // Spacer Cell
+            new TableCell({ width: { size: 5, type: WidthType.PERCENTAGE }, children: [] }),
+            // Right Column: Outlet
+            new TableCell({
+              width: { size: 40, type: WidthType.PERCENTAGE },
+              verticalAlign: VerticalAlign.TOP,
+              children: [
+                new Paragraph({ text: "OUTLET", children: [new TextRun({ bold: true, size: 18 })] }),
+                new Table({
+                  width: { size: 100, type: WidthType.PERCENTAGE },
+                  rows: [
+                    new TableRow({
+                      children: [
+                        new TableCell({ children: [new Paragraph({ text: "OUTLET", alignment: AlignmentType.CENTER, children: [new TextRun({ bold: true })] })] }),
+                        new TableCell({ children: [new Paragraph({ text: "AMOUNT", alignment: AlignmentType.CENTER, children: [new TextRun({ bold: true })] })] }),
+                      ]
+                    }),
+                    ...state.outletRows.map(r => new TableRow({
+                      children: [
+                        new TableCell({ children: [new Paragraph({ text: r.name })] }),
+                        new TableCell({ children: [new Paragraph({ text: r.amount.toString() || "0", alignment: AlignmentType.RIGHT })] }),
+                      ]
+                    })),
+                    new TableRow({
+                      children: [
+                        new TableCell({ children: [new Paragraph({ text: "OUTLET TOTAL", children: [new TextRun({ bold: true })] })] }),
+                        new TableCell({ children: [new Paragraph({ text: outletTotal.toString(), alignment: AlignmentType.RIGHT, children: [new TextRun({ bold: true })] })] }),
+                      ]
+                    }),
+                    new TableRow({
+                      children: [
+                        new TableCell({ children: [new Paragraph({ text: "BALANCED", children: [new TextRun({ bold: true })] })] }),
+                        new TableCell({ children: [new Paragraph({ text: balance.toString(), alignment: AlignmentType.RIGHT, children: [new TextRun({ bold: true })] })] }),
+                      ]
+                    }),
+                  ]
+                })
+              ]
+            })
+          ]
+        })
+      ]
     }));
 
-    const wb = XLSX.utils.book_new();
-    
-    const wsCash = XLSX.utils.json_to_sheet([...cashData, ...extraData]);
-    XLSX.utils.book_append_sheet(wb, wsCash, 'Cash Section');
-    
-    const wsOutlet = XLSX.utils.json_to_sheet(outletData);
-    XLSX.utils.book_append_sheet(wb, wsOutlet, 'Outlet Section');
-    
-    // Summary Data
-    const summaryData = [
-      ['Date', state.date],
-      ['Header Note', state.headerNote],
-      ['Cash Total', cashTotal],
-      ['Extra Rows Total', extraTotal],
-      ['Grand Total', grandTotal],
-      [state.config.outletTotalLabel || 'Outlet Total', outletTotal],
-      ['Balance', balance],
-      ['Notes', state.noteRows.map(n => n.text).join('\n')]
-    ];
-    const wsSummary = XLSX.utils.aoa_to_sheet(summaryData);
-    XLSX.utils.book_append_sheet(wb, wsSummary, 'Summary');
+    children.push(new Paragraph({ text: "" })); // Spacer
+    children.push(new Paragraph({ text: "SIGNATURES", children: [new TextRun({ bold: true, size: 24 })] }));
+    children.push(new Paragraph({ text: "" }));
 
-    XLSX.writeFile(wb, `Cash_Report_${state.date}.xlsx`);
+    // Dynamic Signatures Table
+    children.push(new Table({
+      width: { size: 100, type: WidthType.PERCENTAGE },
+      borders: {
+        top: { style: BorderStyle.NONE },
+        bottom: { style: BorderStyle.NONE },
+        left: { style: BorderStyle.NONE },
+        right: { style: BorderStyle.NONE },
+        insideHorizontal: { style: BorderStyle.NONE },
+        insideVertical: { style: BorderStyle.NONE },
+      },
+      rows: [
+        new TableRow({
+          children: state.signatureRows.map(row => new TableCell({
+            children: [
+              new Paragraph({ text: row.name || "Name", alignment: AlignmentType.CENTER, children: [new TextRun({ bold: true })] }),
+              new Paragraph({ text: row.designation || "Designation", alignment: AlignmentType.CENTER }),
+              new Paragraph({ text: "" }),
+              new Paragraph({ text: "____________________", alignment: AlignmentType.CENTER }),
+              new Paragraph({ text: "Signature", alignment: AlignmentType.CENTER, children: [new TextRun({ size: 16, italics: true })] }),
+            ]
+          }))
+        })
+      ]
+    }));
+
+    children.push(new Paragraph({ text: "" }));
+    children.push(new Paragraph({ text: "NOTES", children: [new TextRun({ bold: true, size: 24 })] }));
+    state.noteRows.forEach(n => {
+      if (n.text) {
+        children.push(new Paragraph({ text: n.text }));
+      }
+    });
+
+    const doc = new Document({
+      sections: [{
+        properties: {},
+        children: children
+      }]
+    });
+
+    const blob = await Packer.toBlob(doc);
+    saveAs(blob, `Cash_Report_${state.date}.docx`);
   };
 
   const handleSaveData = () => {
@@ -1086,6 +1299,7 @@ export default function App() {
               <motion.div 
                 key="editor"
                 ref={reportRef}
+                data-report-container="true"
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -20 }}
@@ -1096,7 +1310,7 @@ export default function App() {
                   <div className="mb-10 flex justify-center print:mb-2">
                     <label className="cursor-pointer group relative">
                       <input type="file" className="hidden" onChange={handleLogoUpload} accept="image/*" />
-                      <div className="w-48 h-20 border-2 border-dashed border-slate-200 rounded-3xl flex items-center justify-center gap-3 text-slate-400 group-hover:border-indigo-400 group-hover:text-indigo-500 group-hover:bg-indigo-50/30 transition-all duration-500 overflow-hidden print:border-none print:h-12">
+                      <div className="w-56 h-24 border-2 border-dashed border-slate-200 rounded-3xl flex items-center justify-center gap-3 text-slate-400 group-hover:border-indigo-400 group-hover:text-indigo-500 group-hover:bg-indigo-50/30 transition-all duration-500 overflow-hidden print:border-none print:h-14">
                         {state.logo ? (
                           <img src={state.logo} alt="Logo" className="h-full w-full object-contain p-3 print:p-0" referrerPolicy="no-referrer" />
                         ) : (
@@ -1464,7 +1678,7 @@ export default function App() {
                                     "w-2.5 h-2.5 rounded-full shadow-sm",
                                     balance > 0 ? 'bg-emerald-500 shadow-emerald-200' : balance < 0 ? 'bg-rose-500 shadow-rose-200' : 'bg-slate-300'
                                   )} />
-                                  <span>{balance > 0 ? 'Over' : balance < 0 ? 'Less' : 'Balanced'}</span>
+                                  <span>BALANCED</span>
                                   <button 
                                     onClick={() => updateState(prev => ({ ...prev, config: { ...prev.config, showBalanceRow: false } }))}
                                     className="print:hidden text-slate-300 hover:text-indigo-600 transition-colors"
@@ -1769,10 +1983,10 @@ export default function App() {
 
             <div className="flex gap-3">
               <button 
-                onClick={handleSaveExcel}
-                className="px-8 py-3 bg-white border border-emerald-100 text-emerald-600 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-emerald-50 transition-all shadow-sm flex items-center gap-3"
+                onClick={handleSaveWord}
+                className="px-8 py-3 bg-white border border-blue-100 text-blue-600 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-blue-50 transition-all shadow-sm flex items-center gap-3"
               >
-                <FileSpreadsheet size={16} /> Excel
+                <FileText size={16} /> Word
               </button>
 
               <button 
