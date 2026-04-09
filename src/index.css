@@ -42,6 +42,19 @@
     display: none !important;
   }
 
+  * {
+    scrollbar-width: none !important;
+    -ms-overflow-style: none !important;
+  }
+  
+  *::-webkit-scrollbar {
+    display: none !important;
+  }
+
+  .overflow-x-auto {
+    overflow: visible !important;
+  }
+
   .shadow-xl, .shadow-sm, .shadow-md, .shadow-2xl {
     box-shadow: none !important;
   }
@@ -66,9 +79,9 @@
   }
 
   th {
-    background-color: #f1f5f9 !important;
+    background-color: #f8fafc !important;
     color: black !important;
-    border: 1px solid #94a3b8 !important;
+    border: 1px solid #cbd5e1 !important;
     -webkit-print-color-adjust: exact !important;
     font-size: 8pt !important;
     padding: 4px !important;

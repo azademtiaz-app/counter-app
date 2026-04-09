@@ -7,6 +7,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { 
   Upload, 
   Plus, 
+  Minus,
   RotateCcw, 
   Trash2, 
   Banknote, 
@@ -29,10 +30,12 @@ import {
   PenTool,
   Download,
   Settings2,
-  Search
+  Search,
+  Lock,
+  Unlock,
+  HelpCircle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
 import { QRCodeSVG } from 'qrcode.react';
 import { format, parseISO, parse } from 'date-fns';
@@ -53,6 +56,7 @@ import {
   ImageRun
 } from 'docx';
 import { saveAs } from 'file-saver';
+import LZString from 'lz-string';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -88,6 +92,11 @@ interface NoteRow {
   text: string;
 }
 
+interface SectionLayout {
+  width?: number;
+  height?: number;
+}
+
 interface AppState {
   id?: string;
   headerNote: string;
@@ -98,6 +107,9 @@ interface AppState {
   signatureRows: SignatureRow[];
   noteRows: NoteRow[];
   logo: string | null;
+  isLogoLocked: boolean;
+  isSignaturesLocked: boolean;
+  gridRatio: number; // 0 to 100, percentage of the first column
   config: {
     cashSectionTitle: string;
     outletSectionTitle: string;
@@ -110,15 +122,29 @@ interface AppState {
     showSignaturesSection: boolean;
     showNotesSection: boolean;
     showBalanceRow: boolean;
+    showLogo: boolean;
+    showReportTitle: boolean;
+    showDate: boolean;
   };
   userId?: string;
   createdAt?: any;
   updatedAt?: any;
 }
 
+const getBusinessDate = () => {
+  const now = new Date();
+  // If before 6 AM, use yesterday's date
+  if (now.getHours() < 6) {
+    const yesterday = new Date(now);
+    yesterday.setDate(yesterday.getDate() - 1);
+    return format(yesterday, 'yyyy-MM-dd');
+  }
+  return format(now, 'yyyy-MM-dd');
+};
+
 const initialState: AppState = {
   headerNote: '',
-  date: format(new Date(), 'yyyy-MM-dd'),
+  date: getBusinessDate(),
   cashRows: [
     { id: '1', denomination: 1000, qty: 0 },
     { id: '2', denomination: 500, qty: 0 },
@@ -141,24 +167,31 @@ const initialState: AppState = {
   ],
   signatureRows: [
     { id: '1', name: '', designation: '' },
+    { id: '2', name: '', designation: '' },
   ],
   noteRows: [
     { id: '1', text: '' },
   ],
   logo: null,
+  isLogoLocked: false,
+  isSignaturesLocked: false,
+  gridRatio: 50,
   config: {
     cashSectionTitle: 'CASH',
     outletSectionTitle: 'OUTLET',
     signaturesSectionTitle: 'SIGNATURES',
     notesSectionTitle: 'NOTES',
-    outletColumnLabel: 'OUTLET',
+    outletColumnLabel: 'NAME',
     outletTotalLabel: 'OUTLET TOTAL',
     showCashSection: true,
     showOutletSection: true,
     showSignaturesSection: true,
     showNotesSection: true,
     showBalanceRow: true,
-  }
+    showLogo: true,
+    showReportTitle: true,
+    showDate: true,
+  },
 };
 
 const EditableTableLabel = ({ 
@@ -177,7 +210,7 @@ const EditableTableLabel = ({
       <div className="flex items-center gap-1">
         <input 
           autoFocus
-          className={cn("bg-white border-b border-indigo-500 focus:outline-none px-1 py-0.5 w-full", className)}
+          className={cn("bg-white border-b border-indigo-500 focus:outline-none px-1 py-0.5 w-full text-slate-900 font-black", className)}
           value={value}
           onChange={(e) => onChange(e.target.value)}
           onBlur={() => setIsEditing(false)}
@@ -192,7 +225,7 @@ const EditableTableLabel = ({
 
   return (
     <div className="flex items-center gap-2 group/label">
-      <span className={cn("truncate", className)}>{value}</span>
+      <span className={cn("truncate font-black", className)}>{value}</span>
       <button 
         onClick={() => setIsEditing(true)}
         className="opacity-0 group-hover/label:opacity-100 p-1 text-slate-300 hover:text-indigo-600 transition-all print:hidden"
@@ -208,6 +241,342 @@ const generateId = () => {
     return crypto.randomUUID();
   }
   return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+};
+
+const evaluateMath = (input: string): number => {
+  if (!input) return 0;
+  try {
+    // Remove commas and other non-math characters except numbers, operators, and dots
+    const sanitized = input.replace(/,/g, '').replace(/[^0-9+\-*/.()]/g, '');
+    // Use Function constructor as a safer alternative to eval for simple math
+    // eslint-disable-next-line no-new-func
+    const result = new Function(`return ${sanitized}`)();
+    return typeof result === 'number' && !isNaN(result) ? Math.round(result) : 0;
+  } catch (e) {
+    return 0;
+  }
+};
+
+const MathInput = ({ 
+  value, 
+  onChange, 
+  placeholder, 
+  className,
+  showCommas = true,
+  disabled = false
+}: { 
+  value: number | string, 
+  onChange: (val: number) => void, 
+  placeholder?: string, 
+  className?: string,
+  type?: "number" | "text",
+  showCommas?: boolean,
+  disabled?: boolean
+}) => {
+  const [localValue, setLocalValue] = useState((value || '').toString());
+  const [isFocused, setIsFocused] = useState(false);
+
+  useEffect(() => {
+    if (!isFocused) {
+      const safeValue = value ?? 0;
+      setLocalValue(typeof safeValue === 'number' ? (showCommas ? safeValue.toLocaleString('en-IN') : safeValue.toString()) : safeValue.toString());
+    }
+  }, [value, isFocused, showCommas]);
+
+  const handleBlur = () => {
+    setIsFocused(false);
+    const result = evaluateMath(localValue);
+    onChange(result);
+    setLocalValue(showCommas ? result.toLocaleString('en-IN') : result.toString());
+  };
+
+  const handleFocus = () => {
+    setIsFocused(true);
+    // When focusing, show raw number without commas for easier editing
+    const rawValue = evaluateMath(localValue).toString();
+    setLocalValue(rawValue === '0' ? '' : rawValue);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+      const current = e.currentTarget;
+      const rect = current.getBoundingClientRect();
+      const section = current.closest('[data-nav-section]');
+      const inputs = Array.from(section ? section.querySelectorAll('.nav-input') : document.querySelectorAll('.nav-input')) as HTMLElement[];
+      
+      let bestMatch: HTMLElement | null = null;
+      let minDistance = Infinity;
+
+      const centerX = rect.left + rect.width / 2;
+      const centerY = rect.top + rect.height / 2;
+
+      inputs.forEach(input => {
+        if (input === current) return;
+        const inputRect = input.getBoundingClientRect();
+        const inputCenterX = inputRect.left + inputRect.width / 2;
+        const inputCenterY = inputRect.top + inputRect.height / 2;
+        
+        let isCorrectDirection = false;
+        let distance = 0;
+
+        if (e.key === 'ArrowUp' && inputCenterY < centerY - 5) {
+          isCorrectDirection = true;
+          distance = Math.abs(inputCenterX - centerX) + Math.abs(inputCenterY - centerY) * 2;
+        } else if (e.key === 'ArrowDown' && inputCenterY > centerY + 5) {
+          isCorrectDirection = true;
+          distance = Math.abs(inputCenterX - centerX) + Math.abs(inputCenterY - centerY) * 2;
+        } else if (e.key === 'ArrowLeft' && inputCenterX < centerX - 5) {
+          isCorrectDirection = true;
+          distance = Math.abs(inputCenterX - centerX) * 2 + Math.abs(inputCenterY - centerY);
+        } else if (e.key === 'ArrowRight' && inputCenterX > centerX + 5) {
+          isCorrectDirection = true;
+          distance = Math.abs(inputCenterX - centerX) * 2 + Math.abs(inputCenterY - centerY);
+        }
+
+        if (isCorrectDirection && distance < minDistance) {
+          minDistance = distance;
+          bestMatch = input;
+        }
+      });
+
+      if (bestMatch) {
+        e.preventDefault();
+        bestMatch.focus();
+        if (bestMatch instanceof HTMLInputElement || bestMatch instanceof HTMLTextAreaElement) {
+          (bestMatch as any).select?.();
+        }
+      }
+    }
+  };
+
+  return (
+    <input
+      type="text"
+      className={cn("nav-input", className, disabled && "cursor-not-allowed opacity-70")}
+      placeholder={placeholder}
+      value={localValue}
+      onChange={(e) => setLocalValue(e.target.value)}
+      onBlur={handleBlur}
+      onFocus={handleFocus}
+      onKeyDown={handleKeyDown}
+      disabled={disabled}
+    />
+  );
+};
+
+const ConfirmationModal = ({ 
+  isOpen, 
+  onClose, 
+  onConfirm, 
+  title, 
+  message 
+}: { 
+  isOpen: boolean, 
+  onClose: () => void, 
+  onConfirm: () => void, 
+  title: string, 
+  message: string 
+}) => {
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
+      <motion.div 
+        initial={{ opacity: 0, scale: 0.95, y: 20 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        className="bg-white rounded-[2.5rem] shadow-2xl border border-slate-100 p-8 max-w-md w-full"
+      >
+        <div className="flex items-center gap-4 mb-6">
+          <div className="p-3 bg-rose-50 rounded-2xl text-rose-500">
+            <AlertCircle size={24} />
+          </div>
+          <div>
+            <h3 className="text-xl font-black text-slate-900">{title}</h3>
+            <p className="text-slate-500 text-sm font-bold">{message}</p>
+          </div>
+        </div>
+        <div className="flex gap-3">
+          <button 
+            onClick={onClose}
+            className="flex-1 px-6 py-3 bg-slate-100 text-slate-600 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-slate-200 transition-all"
+          >
+            Cancel
+          </button>
+          <button 
+            onClick={() => {
+              onConfirm();
+              onClose();
+            }}
+            className="flex-1 px-6 py-3 bg-rose-600 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-rose-700 transition-all shadow-lg shadow-rose-200"
+          >
+            Confirm
+          </button>
+        </div>
+      </motion.div>
+    </div>
+  );
+};
+
+const SectionHeader = ({ 
+  title, 
+  onTitleChange, 
+  onToggle, 
+  isVisible, 
+  icon: Icon, 
+  onAdd, 
+  onReset, 
+  resetOptions,
+  isLocked,
+  onLock,
+  hideTitleInPrint
+}: { 
+  title: string, 
+  onTitleChange?: (val: string) => void,
+  onToggle?: () => void,
+  isVisible?: boolean,
+  icon: any,
+  onAdd?: (count: number) => void,
+  onReset?: () => void,
+  resetOptions?: { label: string, onClick: () => void }[],
+  isLocked?: boolean,
+  onLock?: () => void,
+  hideTitleInPrint?: boolean
+}) => {
+  const [isEditing, setIsEditing] = useState(false);
+  const [addCount, setAddCount] = useState(1);
+  const [showResetMenu, setShowResetMenu] = useState(false);
+
+  return (
+    <div className="flex items-center justify-between group/header mb-2 print:mb-1">
+      <div className="flex items-center gap-3 print:gap-1">
+        <div className="p-2 bg-slate-100 rounded-lg text-slate-600 group-hover/header:bg-indigo-600 group-hover/header:text-white transition-all duration-300 print:hidden">
+          <Icon size={18} />
+        </div>
+        {isEditing ? (
+          <div className="flex items-center gap-1">
+            <input 
+              autoFocus
+              className="bg-white border-b-2 border-indigo-500 focus:outline-none font-black uppercase tracking-widest text-slate-900 px-1 py-0.5 text-sm"
+              value={title}
+              onChange={(e) => onTitleChange?.(e.target.value)}
+              onBlur={() => setIsEditing(false)}
+              onKeyDown={(e) => e.key === 'Enter' && setIsEditing(false)}
+            />
+            <button onClick={() => setIsEditing(false)} className="p-1 hover:bg-slate-100 rounded-full transition-colors"><X size={14} className="text-slate-400" /></button>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2">
+            <span className={cn(
+              "text-slate-700 font-black uppercase tracking-widest text-sm flex items-center gap-2",
+              hideTitleInPrint ? "print:hidden" : "print:text-[10px]"
+            )}>
+              {title}
+              {isLocked && <Lock size={12} className="text-indigo-500 print:hidden" />}
+            </span>
+            {onTitleChange && !isLocked && (
+              <button 
+                onClick={() => setIsEditing(true)}
+                className="opacity-0 group-hover/header:opacity-100 p-1 text-slate-400 hover:text-indigo-600 transition-all print:hidden"
+              >
+                <Edit3 size={14} />
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+      <div className="flex gap-2 print:hidden relative items-center">
+        {onToggle && (
+          <button 
+            onClick={onToggle}
+            className={cn(
+              "p-1.5 rounded-lg transition-all",
+              isVisible 
+                ? "text-slate-400 hover:text-slate-600 hover:bg-slate-100" 
+                : "text-indigo-600 bg-indigo-50 hover:bg-indigo-100"
+            )}
+            title={isVisible ? "Hide Section" : "Show Section"}
+          >
+            {isVisible ? <Eye size={16} /> : <EyeOff size={16} />}
+          </button>
+        )}
+        {onLock && (
+          <button 
+            onClick={onLock}
+            className={cn(
+              "p-1.5 rounded-lg transition-all",
+              isLocked 
+                ? "text-indigo-600 bg-indigo-50 hover:bg-indigo-100" 
+                : "text-slate-400 hover:text-slate-600 hover:bg-slate-100"
+            )}
+            title={isLocked ? "Unlock Section" : "Lock Section"}
+          >
+            {isLocked ? <Lock size={16} /> : <Unlock size={16} />}
+          </button>
+        )}
+        {onAdd && isVisible !== false && (
+          <div className="flex items-center bg-white border border-slate-200 rounded-lg overflow-hidden shadow-sm">
+            <input 
+              type="number" 
+              min="1" 
+              max="50"
+              className="w-10 px-1 py-1 text-xs text-center focus:outline-none border-r border-slate-100 bg-transparent text-slate-900 font-black"
+              value={addCount}
+              onChange={(e) => setAddCount(Math.max(1, parseInt(e.target.value) || 1))}
+            />
+            <button 
+              onClick={() => onAdd(addCount)}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-black uppercase tracking-wider text-slate-600 hover:border-indigo-300 hover:text-indigo-600 hover:bg-indigo-50/50 transition-all"
+            >
+              <Plus size={14} /> Add
+            </button>
+          </div>
+        )}
+        {onReset && isVisible !== false && (
+        <div className="relative">
+          <button 
+            onClick={() => resetOptions ? setShowResetMenu(!showResetMenu) : onReset()} 
+            className="flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-black uppercase tracking-wider bg-white text-slate-600 rounded-lg border border-slate-200 hover:border-rose-300 hover:text-rose-600 hover:bg-rose-50/50 transition-all shadow-sm"
+          >
+            <RotateCcw size={14} /> Reset
+            {resetOptions && <ChevronDown size={12} className={`transition-transform duration-200 ${showResetMenu ? 'rotate-180' : ''}`} />}
+          </button>
+          
+          <AnimatePresence>
+            {showResetMenu && resetOptions && (
+              <>
+                <div 
+                  className="fixed inset-0 z-10" 
+                  onClick={() => setShowResetMenu(false)}
+                />
+                <motion.div 
+                  initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                  className="absolute right-0 mt-2 w-52 bg-white rounded-xl shadow-2xl border border-slate-100 py-1.5 z-20 overflow-hidden"
+                >
+                  <div className="px-3 py-2 text-[10px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-50 mb-1">Reset Options</div>
+                  {resetOptions.map((opt, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => {
+                        opt.onClick();
+                        setShowResetMenu(false);
+                      }}
+                      className="w-full text-left px-4 py-2.5 text-xs text-slate-700 hover:bg-indigo-50 hover:text-indigo-600 transition-colors flex items-center gap-3"
+                    >
+                      <RotateCcw size={12} className="opacity-50" />
+                      <span className="font-black">{opt.label}</span>
+                    </button>
+                  ))}
+                </motion.div>
+              </>
+            )}
+          </AnimatePresence>
+        </div>
+        )}
+      </div>
+    </div>
+  );
 };
 
 export default function App() {
@@ -240,45 +609,142 @@ export default function App() {
   };
 
   const [state, setState] = useState<AppState>(initialState);
+
+  const showNotification = (message: string, type: 'success' | 'error' = 'success') => {
+    setNotification({ message, type });
+    setTimeout(() => setNotification(null), 3000);
+  };
+
+  // Consolidated Load on mount
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const sharedData = urlParams.get('r');
+    
+    if (sharedData) {
+      try {
+        const decompressed = LZString.decompressFromEncodedURIComponent(sharedData);
+        if (decompressed) {
+          const parsed = JSON.parse(decompressed);
+          setState(parsed);
+          showNotification("Shared report loaded");
+          // Clean up URL
+          const newUrl = new URL(window.location.href);
+          newUrl.searchParams.delete('r');
+          window.history.replaceState({}, '', newUrl.toString());
+        }
+      } catch (e) {
+        console.error('Failed to load shared report', e);
+      }
+    } else {
+      const draft = localStorage.getItem('cash_report_draft');
+      if (draft) {
+        try {
+          const parsedDraft = JSON.parse(draft);
+          if (parsedDraft && typeof parsedDraft === 'object') {
+            const mergedConfig = {
+              ...initialState.config,
+              ...(parsedDraft.config || {})
+            };
+            const mergedState = {
+              ...initialState,
+              ...parsedDraft,
+              config: mergedConfig,
+              date: format(new Date(), 'yyyy-MM-dd')
+            };
+            setState(mergedState);
+          }
+        } catch (e) {
+          console.error('Failed to parse draft', e);
+        }
+      }
+    }
+    
+    const savedReports = localStorage.getItem('cash_reports');
+    if (savedReports) {
+      try {
+        setReports(JSON.parse(savedReports));
+      } catch (e) {
+        console.error('Failed to parse saved reports', e);
+      }
+    }
+  }, []);
+
   const [history, setHistory] = useState<AppState[]>([]);
   const [future, setFuture] = useState<AppState[]>([]);
   const [reports, setReports] = useState<AppState[]>([]);
   const [isSaving, setIsSaving] = useState(false);
   const [showQr, setShowQr] = useState(false);
+  const [showInstructions, setShowInstructions] = useState(false);
   const [notification, setNotification] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
   const [showHistory, setShowHistory] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [confirmAction, setConfirmAction] = useState<{
+    title: string;
+    message: string;
+    onConfirm: () => void;
+  } | null>(null);
   const reportRef = useRef<HTMLDivElement>(null);
   const dateInputRef = useRef<HTMLInputElement>(null);
+
+  const updateState = useCallback((newState: AppState | ((prev: AppState) => AppState)) => {
+    setState(current => {
+      const resolved = typeof newState === 'function' ? newState(current) : newState;
+      setHistory(prev => [current, ...prev].slice(0, 50));
+      setFuture([]);
+      return resolved;
+    });
+  }, []);
+
+  const undo = useCallback(() => {
+    setHistory(prevHistory => {
+      if (prevHistory.length === 0) return prevHistory;
+      const previous = prevHistory[0];
+      const newHistory = prevHistory.slice(1);
+      setState(current => {
+        setFuture(prevFuture => [current, ...prevFuture]);
+        return previous;
+      });
+      return newHistory;
+    });
+  }, []);
+
+  const redo = useCallback(() => {
+    setFuture(prevFuture => {
+      if (prevFuture.length === 0) return prevFuture;
+      const next = prevFuture[0];
+      const newFuture = prevFuture.slice(1);
+      setState(current => {
+        setHistory(prevHistory => [current, ...prevHistory].slice(0, 50));
+        return next;
+      });
+      return newFuture;
+    });
+  }, []);
 
   // Keyboard Shortcuts for Undo/Redo
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Check if target is an input or textarea
+      const target = e.target as HTMLElement;
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') {
+        // Allow undo/redo even in inputs if needed, but be careful
+      }
+
       if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
         if (e.shiftKey) {
           redo();
         } else {
           undo();
         }
+        e.preventDefault();
       } else if ((e.ctrlKey || e.metaKey) && e.key === 'y') {
         redo();
+        e.preventDefault();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [history, future, state]);
-
-  // Load Reports from LocalStorage
-  useEffect(() => {
-    const savedReports = localStorage.getItem('cash_reports');
-    if (savedReports) {
-      try {
-        setReports(JSON.parse(savedReports));
-      } catch (e) {
-        console.error("Failed to parse saved reports", e);
-      }
-    }
-  }, []);
+  }, [undo, redo]); // depend on stable callbacks
 
   // Save Reports to LocalStorage whenever they change
   useEffect(() => {
@@ -292,45 +758,6 @@ export default function App() {
     }, 1000);
     return () => clearTimeout(timer);
   }, [state]);
-
-  // Load draft on mount
-  useEffect(() => {
-    const draft = localStorage.getItem('cash_report_draft');
-    if (draft) {
-      try {
-        const parsedDraft = JSON.parse(draft);
-        if (parsedDraft && typeof parsedDraft === 'object') {
-          // Deep merge config to ensure all properties exist
-          const mergedConfig = {
-            ...initialState.config,
-            ...(parsedDraft.config || {})
-          };
-          
-          const mergedState = {
-            ...initialState,
-            ...parsedDraft,
-            config: mergedConfig,
-            // Ensure rows are arrays
-            cashRows: Array.isArray(parsedDraft.cashRows) ? parsedDraft.cashRows : initialState.cashRows,
-            extraRows: Array.isArray(parsedDraft.extraRows) ? parsedDraft.extraRows : initialState.extraRows,
-            outletRows: Array.isArray(parsedDraft.outletRows) ? parsedDraft.outletRows : initialState.outletRows,
-            signatureRows: Array.isArray(parsedDraft.signatureRows) ? parsedDraft.signatureRows : initialState.signatureRows,
-            noteRows: Array.isArray(parsedDraft.noteRows) ? parsedDraft.noteRows : initialState.noteRows,
-            // Always update date to today on mount to satisfy "auto change with local time"
-            date: format(new Date(), 'yyyy-MM-dd')
-          };
-          setState(mergedState);
-        }
-      } catch (e) {
-        console.error("Failed to load draft:", e);
-      }
-    }
-  }, []);
-
-  const showNotification = (message: string, type: 'success' | 'error' = 'success') => {
-    setNotification({ message, type });
-    setTimeout(() => setNotification(null), 3000);
-  };
 
   const saveReport = () => {
     setIsSaving(true);
@@ -361,42 +788,23 @@ export default function App() {
   };
 
   const deleteReport = (id: string) => {
-    if (!window.confirm("Are you sure you want to delete this report?")) return;
-    setReports(prev => prev.filter(r => r.id !== id));
-    if (state.id === id) {
-      resetAll();
-    }
-    showNotification("Report deleted");
+    setConfirmAction({
+      title: 'Delete Report',
+      message: 'Are you sure you want to delete this report? This action cannot be undone.',
+      onConfirm: () => {
+        setReports(prev => prev.filter(r => r.id !== id));
+        if (state.id === id) {
+          resetAll();
+        }
+        showNotification("Report deleted");
+      }
+    });
   };
 
   const loadReport = (report: AppState) => {
     setState(report);
     setShowHistory(false);
     showNotification("Report loaded");
-  };
-
-  const updateState = (newState: AppState | ((prev: AppState) => AppState)) => {
-    setHistory(prev => [state, ...prev].slice(0, 50)); // Limit history to 50 steps
-    setFuture([]); // Clear future on new action
-    setState(newState);
-  };
-
-  const undo = () => {
-    if (history.length === 0) return;
-    const previous = history[0];
-    const newHistory = history.slice(1);
-    setFuture(prev => [state, ...prev]);
-    setHistory(newHistory);
-    setState(previous);
-  };
-
-  const redo = () => {
-    if (future.length === 0) return;
-    const next = future[0];
-    const newFuture = future.slice(1);
-    setHistory(prev => [state, ...prev]);
-    setFuture(newFuture);
-    setState(next);
   };
 
   // Calculations
@@ -418,6 +826,10 @@ export default function App() {
 
   // Handlers
   const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (state.isLogoLocked) {
+      showNotification("Logo is locked. Unlock it to change.", "error");
+      return;
+    }
     const file = e.target.files?.[0];
     if (file) {
       const reader = new FileReader();
@@ -453,6 +865,10 @@ export default function App() {
   };
 
   const addSignatureRow = () => {
+    if (state.isSignaturesLocked) {
+      showNotification("Signatures are locked", "error");
+      return;
+    }
     updateState(prev => ({
       ...prev,
       signatureRows: [...prev.signatureRows, { id: generateId(), name: '', designation: '' }]
@@ -467,14 +883,22 @@ export default function App() {
   };
 
   const resetSection = (section: keyof AppState) => {
+    if (section === 'signatureRows' && state.isSignaturesLocked) {
+      showNotification("Signatures are locked", "error");
+      return;
+    }
     updateState(prev => ({ ...prev, [section]: initialState[section] }));
   };
 
   const resetAll = () => {
-    updateState({
-      ...initialState,
-      date: new Date().toISOString().split('T')[0]
-    });
+    updateState(prev => ({
+      ...JSON.parse(JSON.stringify(initialState)),
+      logo: prev.isLogoLocked ? prev.logo : initialState.logo,
+      isLogoLocked: prev.isLogoLocked,
+      signatureRows: prev.isSignaturesLocked ? prev.signatureRows : initialState.signatureRows,
+      isSignaturesLocked: prev.isSignaturesLocked,
+      date: getBusinessDate()
+    }));
   };
 
   const resetCashQuantities = () => {
@@ -506,7 +930,10 @@ export default function App() {
         showOutletSection: false,
         showSignaturesSection: false,
         showNotesSection: false,
-        showBalanceRow: false
+        showBalanceRow: false,
+        showLogo: false,
+        showReportTitle: false,
+        showDate: false
       }
     }));
   };
@@ -520,7 +947,10 @@ export default function App() {
         showOutletSection: true,
         showSignaturesSection: true,
         showNotesSection: true,
-        showBalanceRow: true
+        showBalanceRow: true,
+        showLogo: true,
+        showReportTitle: true,
+        showDate: true
       }
     }));
   };
@@ -575,14 +1005,31 @@ export default function App() {
             ${styles}
             <style>
               @import "tailwindcss";
+              @page { size: auto; margin: 10mm; }
               body { background: white !important; padding: 0 !important; margin: 0 !important; }
               .print-hidden { display: none !important; }
               button { display: none !important; }
               input, textarea { border: none !important; background: transparent !important; padding: 0 !important; }
-              .shadow-xl, .shadow-sm { shadow: none !important; }
-              .rounded-2xl, .rounded-xl { border-radius: 0 !important; }
+              .shadow-xl, .shadow-sm { box-shadow: none !important; }
+              .rounded-2xl, .rounded-xl, .rounded-[2rem], .rounded-[2.5rem] { border-radius: 0 !important; }
               .bg-slate-50, .bg-slate-100 { background: transparent !important; }
-              * { color-adjust: exact !important; -webkit-print-color-adjust: exact !important; }
+              * { 
+                color-adjust: exact !important; 
+                -webkit-print-color-adjust: exact !important;
+                scrollbar-width: none !important;
+                -ms-overflow-style: none !important;
+              }
+              *::-webkit-scrollbar { display: none !important; }
+              .overflow-x-auto { overflow: visible !important; }
+              table { border-collapse: collapse !important; width: 100% !important; border: 1px solid #cbd5e1 !important; border-radius: 0 !important; overflow: visible !important; }
+              th { border: 1px solid #cbd5e1 !important; background-color: #f8fafc !important; padding: 8pt 12pt !important; }
+              td { border: 1px solid #cbd5e1 !important; padding: 6pt 12pt !important; }
+              .print-total { font-size: 10.5pt !important; font-weight: 900 !important; text-transform: uppercase !important; }
+              
+              /* Force single page logic */
+              .space-y-20 { margin-top: 2rem !important; }
+              .p-12 { padding: 1.5rem !important; }
+              .gap-12 { gap: 1.5rem !important; }
             </style>
           </head>
           <body>
@@ -602,68 +1049,6 @@ export default function App() {
     } catch (e) {
       console.error('Print failed:', e);
       window.print(); // Final fallback
-    }
-  };
-
-  const handleSavePdf = async () => {
-    if (!reportRef.current) {
-      console.error('Report ref not found');
-      return;
-    }
-    
-    try {
-      const canvas = await html2canvas(reportRef.current, {
-        scale: 3, // Higher scale for better quality
-        useCORS: true,
-        logging: false,
-        backgroundColor: '#ffffff',
-        windowWidth: 1200, // Fixed width for consistent layout
-        onclone: (clonedDoc) => {
-          const report = clonedDoc.querySelector('[data-report-container]') as HTMLElement;
-          if (report) {
-            report.style.borderRadius = '0';
-            report.style.boxShadow = 'none';
-            report.style.border = 'none';
-            
-            // Force 2 columns for the grid in export
-            const grid = report.querySelector('.grid') as HTMLElement;
-            if (grid) {
-              grid.style.display = 'grid';
-              grid.style.gridTemplateColumns = 'repeat(2, minmax(0, 1fr))';
-              grid.style.gap = '1.5rem';
-            }
-
-            // Find all elements that should be hidden in print/export
-            const toHide = report.querySelectorAll('.print\\:hidden');
-            toHide.forEach(el => (el as HTMLElement).style.display = 'none');
-
-            // Adjust paddings and margins to match print feel
-            const header = report.querySelector('.p-12');
-            if (header) (header as HTMLElement).style.padding = '2rem 1rem';
-          }
-        }
-      });
-      
-      const imgData = canvas.toDataURL('image/png');
-      const pdf = new jsPDF({
-        orientation: 'portrait',
-        unit: 'px',
-        format: 'a4'
-      });
-
-      const pdfWidth = pdf.internal.pageSize.getWidth();
-      const pdfHeight = pdf.internal.pageSize.getHeight();
-      const imgWidth = canvas.width;
-      const imgHeight = canvas.height;
-      const ratio = Math.min(pdfWidth / imgWidth, pdfHeight / imgHeight);
-      const finalWidth = imgWidth * ratio;
-      const finalHeight = imgHeight * ratio;
-      
-      pdf.addImage(imgData, 'PNG', (pdfWidth - finalWidth) / 2, 20, finalWidth, finalHeight);
-      pdf.save(`Cash_Report_${state.date}.pdf`);
-    } catch (e) {
-      console.error('PDF generation failed:', e);
-      alert('PDF generation failed. Please try again or use the Print button.');
     }
   };
 
@@ -699,17 +1084,20 @@ export default function App() {
     }
 
     // Header
-    children.push(new Paragraph({
-      alignment: AlignmentType.CENTER,
-      children: [
-        new TextRun({
-          text: state.headerNote || 'Daily Finance Report',
-          bold: true,
-          size: 32,
-          allCaps: true
-        })
-      ]
-    }));
+    if (state.headerNote) {
+      children.push(new Paragraph({
+        alignment: AlignmentType.CENTER,
+        children: [
+          new TextRun({
+            text: state.headerNote,
+            bold: true,
+            size: 32,
+            allCaps: true
+          })
+        ]
+      }));
+      children.push(new Paragraph({ text: "" })); // Spacer
+    }
 
     children.push(new Paragraph({
       alignment: AlignmentType.CENTER,
@@ -763,9 +1151,9 @@ export default function App() {
                     })),
                     new TableRow({
                       children: [
-                        new TableCell({ children: [new Paragraph({ text: "CASH TOTAL", children: [new TextRun({ bold: true })] })] }),
+                        new TableCell({ children: [new Paragraph({ text: "CASH TOTAL", children: [new TextRun({ bold: true, size: 24 })] })] }),
                         new TableCell({ children: [new Paragraph({ text: "" })] }),
-                        new TableCell({ children: [new Paragraph({ text: cashTotal.toString(), alignment: AlignmentType.RIGHT, children: [new TextRun({ bold: true })] })] }),
+                        new TableCell({ children: [new Paragraph({ text: cashTotal.toString(), alignment: AlignmentType.RIGHT, children: [new TextRun({ bold: true, size: 24 })] })] }),
                       ]
                     }),
                     ...state.extraRows.map(r => new TableRow({
@@ -777,9 +1165,9 @@ export default function App() {
                     })),
                     new TableRow({
                       children: [
-                        new TableCell({ children: [new Paragraph({ text: "GRAND TOTAL", children: [new TextRun({ bold: true })] })] }),
+                        new TableCell({ children: [new Paragraph({ text: "GRAND TOTAL", children: [new TextRun({ bold: true, size: 24 })] })] }),
                         new TableCell({ children: [new Paragraph({ text: "" })] }),
-                        new TableCell({ children: [new Paragraph({ text: grandTotal.toString(), alignment: AlignmentType.RIGHT, children: [new TextRun({ bold: true })] })] }),
+                        new TableCell({ children: [new Paragraph({ text: grandTotal.toString(), alignment: AlignmentType.RIGHT, children: [new TextRun({ bold: true, size: 24 })] })] }),
                       ]
                     }),
                   ]
@@ -799,7 +1187,7 @@ export default function App() {
                   rows: [
                     new TableRow({
                       children: [
-                        new TableCell({ children: [new Paragraph({ text: "OUTLET", alignment: AlignmentType.CENTER, children: [new TextRun({ bold: true })] })] }),
+                        new TableCell({ children: [new Paragraph({ text: state.config.outletColumnLabel, alignment: AlignmentType.CENTER, children: [new TextRun({ bold: true })] })] }),
                         new TableCell({ children: [new Paragraph({ text: "AMOUNT", alignment: AlignmentType.CENTER, children: [new TextRun({ bold: true })] })] }),
                       ]
                     }),
@@ -811,14 +1199,14 @@ export default function App() {
                     })),
                     new TableRow({
                       children: [
-                        new TableCell({ children: [new Paragraph({ text: "OUTLET TOTAL", children: [new TextRun({ bold: true })] })] }),
-                        new TableCell({ children: [new Paragraph({ text: outletTotal.toString(), alignment: AlignmentType.RIGHT, children: [new TextRun({ bold: true })] })] }),
+                        new TableCell({ children: [new Paragraph({ text: state.config.outletTotalLabel, children: [new TextRun({ bold: true, size: 24 })] })] }),
+                        new TableCell({ children: [new Paragraph({ text: outletTotal.toLocaleString('en-IN'), alignment: AlignmentType.RIGHT, children: [new TextRun({ bold: true, size: 24 })] })] }),
                       ]
                     }),
                     new TableRow({
                       children: [
-                        new TableCell({ children: [new Paragraph({ text: "BALANCED", children: [new TextRun({ bold: true })] })] }),
-                        new TableCell({ children: [new Paragraph({ text: balance.toString(), alignment: AlignmentType.RIGHT, children: [new TextRun({ bold: true })] })] }),
+                        new TableCell({ children: [new Paragraph({ text: balance > 0 ? "OVER" : balance < 0 ? "LESS" : "BALANCED", children: [new TextRun({ bold: true, size: 24 })] })] }),
+                        new TableCell({ children: [new Paragraph({ text: (balance > 0 ? "+" : "") + balance.toLocaleString('en-IN'), alignment: AlignmentType.RIGHT, children: [new TextRun({ bold: true, size: 24, color: balance > 0 ? "10b981" : balance < 0 ? "f43f5e" : "334155" })] })] }),
                       ]
                     }),
                   ]
@@ -849,11 +1237,11 @@ export default function App() {
         new TableRow({
           children: state.signatureRows.map(row => new TableCell({
             children: [
-              new Paragraph({ text: row.name || "Name", alignment: AlignmentType.CENTER, children: [new TextRun({ bold: true })] }),
-              new Paragraph({ text: row.designation || "Designation", alignment: AlignmentType.CENTER }),
+              new Paragraph({ text: row.name || "Name", alignment: AlignmentType.LEFT, children: [new TextRun({ bold: true })] }),
+              new Paragraph({ text: row.designation || "Designation", alignment: AlignmentType.LEFT }),
               new Paragraph({ text: "" }),
-              new Paragraph({ text: "____________________", alignment: AlignmentType.CENTER }),
-              new Paragraph({ text: "Signature", alignment: AlignmentType.CENTER, children: [new TextRun({ size: 16, italics: true })] }),
+              new Paragraph({ text: "____________________", alignment: AlignmentType.LEFT }),
+              new Paragraph({ text: "Signature", alignment: AlignmentType.LEFT, children: [new TextRun({ size: 16, italics: true })] }),
             ]
           }))
         })
@@ -879,258 +1267,111 @@ export default function App() {
     saveAs(blob, `Cash_Report_${state.date}.docx`);
   };
 
-  const handleSaveData = () => {
-    const dataStr = JSON.stringify(state, null, 2);
-    const blob = new Blob([dataStr], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `Cash_Report_Data_${state.date}.json`;
-    link.click();
-    URL.revokeObjectURL(url);
+  const handleCreateShortcut = () => {
+    const htmlContent = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Cash Report Shortcut</title>
+        <meta http-equiv="refresh" content="0;url=${shareUrl}">
+      </head>
+      <body style="font-family: sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; background: #f8fafc;">
+        <div style="text-align: center; padding: 40px; background: white; border-radius: 24px; shadow: 0 10px 25px rgba(0,0,0,0.05);">
+          <h2 style="color: #4f46e5;">Redirecting...</h2>
+          <p style="color: #64748b;">Opening your Cash Report App</p>
+          <script>window.location.href = "${shareUrl}";</script>
+        </div>
+      </body>
+      </html>
+    `;
+    const blob = new Blob([htmlContent], { type: 'text/html' });
+    saveAs(blob, "Cash_Report_Shortcut.html");
+    showNotification("Shortcut created! Move this file to your desktop.");
   };
 
-  const handleLoadData = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        try {
-          const loadedState = JSON.parse(event.target?.result as string);
-          // Simple validation: check if it has a config or cashRows
-          if (loadedState.cashRows || loadedState.config) {
-            updateState(loadedState);
-          } else {
-            alert('Invalid data file format.');
-          }
-        } catch (err) {
-          console.error('Failed to parse JSON:', err);
-          alert('Failed to load data. File might be corrupted.');
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+      const current = e.currentTarget;
+      const rect = current.getBoundingClientRect();
+      const section = current.closest('[data-nav-section]');
+      const inputs = Array.from(section ? section.querySelectorAll('.nav-input') : document.querySelectorAll('.nav-input')) as HTMLElement[];
+      
+      let bestMatch: HTMLElement | null = null;
+      let minDistance = Infinity;
+
+      const centerX = rect.left + rect.width / 2;
+      const centerY = rect.top + rect.height / 2;
+
+      inputs.forEach(input => {
+        if (input === current) return;
+        const inputRect = input.getBoundingClientRect();
+        const inputCenterX = inputRect.left + inputRect.width / 2;
+        const inputCenterY = inputRect.top + inputRect.height / 2;
+        
+        let isCorrectDirection = false;
+        let distance = 0;
+
+        if (e.key === 'ArrowUp' && inputCenterY < centerY - 5) {
+          isCorrectDirection = true;
+          distance = Math.abs(inputCenterX - centerX) + Math.abs(inputCenterY - centerY) * 2;
+        } else if (e.key === 'ArrowDown' && inputCenterY > centerY + 5) {
+          isCorrectDirection = true;
+          distance = Math.abs(inputCenterX - centerX) + Math.abs(inputCenterY - centerY) * 2;
+        } else if (e.key === 'ArrowLeft' && inputCenterX < centerX - 5) {
+          isCorrectDirection = true;
+          distance = Math.abs(inputCenterX - centerX) * 2 + Math.abs(inputCenterY - centerY);
+        } else if (e.key === 'ArrowRight' && inputCenterX > centerX + 5) {
+          isCorrectDirection = true;
+          distance = Math.abs(inputCenterX - centerX) * 2 + Math.abs(inputCenterY - centerY);
         }
-      };
-      reader.readAsText(file);
-    }
-  };
 
-  const evaluateMath = (input: string): number => {
-    try {
-      // Remove commas first
-      const noCommas = input.replace(/,/g, '');
-      // Basic sanitization: only allow numbers and + - * / . ( )
-      const sanitized = noCommas.replace(/[^-+*/.()0-9]/g, '');
-      if (!sanitized) return 0;
-      // Use Function constructor for simple math evaluation (safer than eval if sanitized)
-      // eslint-disable-next-line no-new-func
-      const result = new Function(`return ${sanitized}`)();
-      return typeof result === 'number' && isFinite(result) ? result : 0;
-    } catch (e) {
-      return 0;
-    }
-  };
+        if (isCorrectDirection && distance < minDistance) {
+          minDistance = distance;
+          bestMatch = input;
+        }
+      });
 
-  const MathInput = ({ 
-    value, 
-    onChange, 
-    placeholder, 
-    className,
-    showCommas = true 
-  }: { 
-    value: number | string, 
-    onChange: (val: number) => void, 
-    placeholder?: string, 
-    className?: string,
-    type?: "number" | "text",
-    showCommas?: boolean
-  }) => {
-    const [localValue, setLocalValue] = useState((value || '').toString());
-    const [isFocused, setIsFocused] = useState(false);
-
-    useEffect(() => {
-      if (!isFocused) {
-        const safeValue = value ?? 0;
-        setLocalValue(typeof safeValue === 'number' ? (showCommas ? safeValue.toLocaleString('en-IN') : safeValue.toString()) : safeValue.toString());
+      if (bestMatch) {
+        e.preventDefault();
+        bestMatch.focus();
+        if (bestMatch instanceof HTMLInputElement || bestMatch instanceof HTMLTextAreaElement) {
+          (bestMatch as any).select?.();
+        }
       }
-    }, [value, isFocused, showCommas]);
-
-    const handleBlur = () => {
-      setIsFocused(false);
-      const result = evaluateMath(localValue);
-      onChange(result);
-      setLocalValue(showCommas ? result.toLocaleString('en-IN') : result.toString());
-    };
-
-    const handleFocus = () => {
-      setIsFocused(true);
-      // When focusing, show raw number without commas for easier editing
-      const rawValue = evaluateMath(localValue).toString();
-      setLocalValue(rawValue === '0' ? '' : rawValue);
-    };
-
-    const handleKeyDown = (e: React.KeyboardEvent) => {
-      // Let global handler handle Enter for navigation
-    };
-
-    return (
-      <input
-        type="text"
-        className={className}
-        placeholder={placeholder}
-        value={localValue}
-        onChange={(e) => setLocalValue(e.target.value)}
-        onBlur={handleBlur}
-        onFocus={handleFocus}
-        onKeyDown={handleKeyDown}
-      />
-    );
+    }
   };
 
-  const SectionHeader = ({ 
-    title, 
-    onTitleChange, 
-    onToggle, 
-    isVisible, 
-    icon: Icon,
-    onReset,
-    onAdd,
-    resetOptions
-  }: { 
-    title: string, 
-    onTitleChange: (val: string) => void, 
-    onToggle?: () => void, 
-    isVisible?: boolean, 
-    icon: any,
-    onReset?: () => void,
-    onAdd?: (count: number) => void,
-    resetOptions?: { label: string, onClick: () => void }[]
-  }) => {
-    const [isEditing, setIsEditing] = useState(false);
-    const [showResetMenu, setShowResetMenu] = useState(false);
-    const [addCount, setAddCount] = useState(1);
-
-    return (
-      <div className="flex items-center justify-between group/header mb-2 print:mb-1">
-        <div className="flex items-center gap-3 print:gap-1">
-          <div className="p-2 bg-slate-100 rounded-lg text-slate-600 group-hover/header:bg-indigo-600 group-hover/header:text-white transition-all duration-300 print:hidden">
-            <Icon size={18} />
-          </div>
-          {isEditing ? (
-            <div className="flex items-center gap-1">
-              <input 
-                autoFocus
-                className="bg-white border-b-2 border-indigo-500 focus:outline-none font-bold uppercase tracking-widest text-slate-900 px-1 py-0.5 text-sm"
-                value={title}
-                onChange={(e) => onTitleChange(e.target.value)}
-                onBlur={() => setIsEditing(false)}
-                onKeyDown={(e) => e.key === 'Enter' && setIsEditing(false)}
-              />
-              <button onClick={() => setIsEditing(false)} className="p-1 hover:bg-slate-100 rounded-full transition-colors"><X size={14} className="text-slate-400" /></button>
-            </div>
-          ) : (
-            <div className="flex items-center gap-2">
-              <span className="text-slate-700 font-black uppercase tracking-widest text-sm print:text-[10px]">{title}</span>
-              <button 
-                onClick={() => setIsEditing(true)}
-                className="opacity-0 group-hover/header:opacity-100 p-1 text-slate-400 hover:text-indigo-600 transition-all print:hidden"
-              >
-                <Edit3 size={14} />
-              </button>
-            </div>
-          )}
-        </div>
-        <div className="flex gap-2 print:hidden relative items-center">
-          {onToggle && (
-            <button 
-              onClick={onToggle}
-              className={cn(
-                "p-1.5 rounded-lg transition-all",
-                isVisible 
-                  ? "text-slate-400 hover:text-slate-600 hover:bg-slate-100" 
-                  : "text-indigo-600 bg-indigo-50 hover:bg-indigo-100"
-              )}
-              title={isVisible ? "Hide Section" : "Show Section"}
-            >
-              {isVisible ? <Eye size={16} /> : <EyeOff size={16} />}
-            </button>
-          )}
-          {onAdd && isVisible !== false && (
-            <div className="flex items-center bg-white border border-slate-200 rounded-lg overflow-hidden shadow-sm">
-              <input 
-                type="number" 
-                min="1" 
-                max="50"
-                className="w-10 px-1 py-1 text-xs text-center focus:outline-none border-r border-slate-100 bg-transparent text-slate-900 font-bold"
-                value={addCount}
-                onChange={(e) => setAddCount(Math.max(1, parseInt(e.target.value) || 1))}
-              />
-              <button 
-                onClick={() => onAdd(addCount)}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-600 hover:border-indigo-300 hover:text-indigo-600 hover:bg-indigo-50/50 transition-all"
-              >
-                <Plus size={14} /> Add
-              </button>
-            </div>
-          )}
-          {onReset && isVisible !== false && (
-          <div className="relative">
-            <button 
-              onClick={() => resetOptions ? setShowResetMenu(!showResetMenu) : onReset()} 
-              className="flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider bg-white text-slate-600 rounded-lg border border-slate-200 hover:border-rose-300 hover:text-rose-600 hover:bg-rose-50/50 transition-all shadow-sm"
-            >
-              <RotateCcw size={14} /> Reset
-              {resetOptions && <ChevronDown size={12} className={`transition-transform duration-200 ${showResetMenu ? 'rotate-180' : ''}`} />}
-            </button>
-            
-            <AnimatePresence>
-              {showResetMenu && resetOptions && (
-                <>
-                  <div 
-                    className="fixed inset-0 z-10" 
-                    onClick={() => setShowResetMenu(false)}
-                  />
-                  <motion.div 
-                    initial={{ opacity: 0, y: 10, scale: 0.95 }}
-                    animate={{ opacity: 1, y: 0, scale: 1 }}
-                    exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                    className="absolute right-0 mt-2 w-52 bg-white rounded-xl shadow-2xl border border-slate-100 py-1.5 z-20 overflow-hidden"
-                  >
-                    <div className="px-3 py-2 text-[10px] font-bold text-slate-400 uppercase tracking-widest border-b border-slate-50 mb-1">Reset Options</div>
-                    {resetOptions.map((opt, idx) => (
-                      <button
-                        key={idx}
-                        onClick={() => {
-                          opt.onClick();
-                          setShowResetMenu(false);
-                        }}
-                        className="w-full text-left px-4 py-2.5 text-xs text-slate-700 hover:bg-indigo-50 hover:text-indigo-600 transition-colors flex items-center gap-3"
-                      >
-                        <RotateCcw size={12} className="opacity-50" />
-                        <span className="font-medium">{opt.label}</span>
-                      </button>
-                    ))}
-                    <div className="border-t border-slate-50 my-1.5" />
-                    <button
-                      onClick={() => {
-                        onReset();
-                        setShowResetMenu(false);
-                      }}
-                      className="w-full text-left px-4 py-2.5 text-xs text-rose-600 hover:bg-rose-50 transition-colors flex items-center gap-3 font-bold"
-                    >
-                      <Trash2 size={12} />
-                      <span>Reset Everything</span>
-                    </button>
-                  </motion.div>
-                </>
-              )}
-            </AnimatePresence>
-          </div>
-          )}
-        </div>
-      </div>
-    );
+  const handleResetLayout = () => {
+    updateState(prev => ({
+      ...prev,
+      gridRatio: 50
+    }));
   };
+
+  const shareUrl = useMemo(() => {
+    try {
+      // Create a copy without the logo to keep the URL size manageable
+      const { logo, ...stateWithoutLogo } = state;
+      const data = JSON.stringify(stateWithoutLogo);
+      const compressed = LZString.compressToEncodedURIComponent(data);
+      
+      // Get the base URL (origin + pathname)
+      let baseUrl = window.location.origin + window.location.pathname;
+      // Ensure it ends with a slash if it's just the domain
+      if (baseUrl.endsWith('run.app')) baseUrl += '/';
+      
+      const url = new URL(baseUrl);
+      url.searchParams.set('r', compressed);
+      return url.toString();
+    } catch (e) {
+      return window.location.origin + window.location.pathname;
+    }
+  }, [state]);
+
+  const isQrTooLarge = shareUrl.length > 2000; // Lowered threshold for better mobile scanning
 
   return (
-    <div className="min-h-screen bg-slate-50 transition-colors duration-300 font-sans text-slate-900 print:p-0 print:bg-white">
+    <div className="min-h-screen bg-slate-50 transition-colors duration-500 font-sans text-slate-900 print:p-0 print:bg-white">
       <div className="max-w-7xl mx-auto pt-12 pb-12 px-4 sm:px-6 lg:px-8 print:p-0 print:max-w-none">
         
         {/* Notifications */}
@@ -1175,7 +1416,7 @@ export default function App() {
           </div>
 
           {/* History & Undo/Redo Toggle */}
-          <div className="flex gap-4 self-end sm:self-auto">
+          <div className="flex gap-4 self-end sm:self-auto items-center">
             <div className="flex bg-white border border-slate-100 rounded-2xl shadow-sm p-1">
             <button 
               onClick={undo}
@@ -1306,110 +1547,180 @@ export default function App() {
                 className="bg-white rounded-[2.5rem] shadow-[0_40px_80px_-20px_rgba(15,23,42,0.15)] overflow-hidden border border-slate-100"
               >
                 {/* Header */}
-                <div className="p-12 text-center border-b border-slate-100 bg-slate-50/30 print:p-4 print:border-none">
-                  <div className="mb-10 flex justify-center print:mb-2">
-                    <label className="cursor-pointer group relative">
-                      <input type="file" className="hidden" onChange={handleLogoUpload} accept="image/*" />
-                      <div className="w-56 h-24 border-2 border-dashed border-slate-200 rounded-3xl flex items-center justify-center gap-3 text-slate-400 group-hover:border-indigo-400 group-hover:text-indigo-500 group-hover:bg-indigo-50/30 transition-all duration-500 overflow-hidden print:border-none print:h-14">
-                        {state.logo ? (
-                          <img src={state.logo} alt="Logo" className="h-full w-full object-contain p-3 print:p-0" referrerPolicy="no-referrer" />
-                        ) : (
-                          <>
-                            <Upload size={24} className="print:hidden" />
-                            <span className="text-xs font-black uppercase tracking-[0.2em] print:hidden">Brand Logo</span>
-                          </>
-                        )}
-                      </div>
-                      {state.logo && (
-                        <button 
-                          onClick={(e) => { e.preventDefault(); updateState(prev => ({ ...prev, logo: null })); }}
-                          className="absolute -top-2 -right-2 p-1.5 bg-white border border-slate-200 rounded-full text-slate-400 hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-all shadow-lg print:hidden"
-                        >
-                          <X size={12} />
-                        </button>
-                      )}
-                    </label>
-                  </div>
-
-                  <div className="max-w-md mx-auto space-y-8 print:space-y-2">
-                    <input
-                      type="text"
-                      placeholder="Report Title / Header Note"
-                      className={cn(
-                        "nav-input w-full px-8 py-4 bg-white border border-slate-200 rounded-2xl text-base font-bold focus:outline-none focus:ring-8 focus:ring-indigo-500/5 focus:border-indigo-500 transition-all text-center text-slate-900 placeholder:text-slate-300 shadow-sm print:bg-transparent print:border-none print:text-2xl print:font-black print:py-0",
-                        !state.headerNote && 'print:hidden'
-                      )}
-                      value={state.headerNote}
-                      onChange={(e) => updateState(prev => ({ ...prev, headerNote: e.target.value }))}
-                    />
-                    
-                    <div className="flex items-center justify-center gap-6 text-[10px] font-black text-slate-300 uppercase tracking-[0.3em] print:gap-2">
-                      <div className="h-px w-12 bg-slate-100 print:hidden" />
-                      <div 
-                        className="relative group"
-                        onClick={() => {
-                          try {
-                            dateInputRef.current?.showPicker();
-                          } catch (e) {
-                            // Fallback for browsers that don't support showPicker()
-                            dateInputRef.current?.click();
-                          }
-                        }}
+                <div className="p-8 text-center border-b border-slate-100 bg-slate-50/30 print:p-4 print:border-none print:bg-white relative" data-nav-section="header">
+                  {/* Logo Section */}
+                  <AnimatePresence>
+                    {state.config.showLogo && (
+                      <motion.div 
+                        initial={{ opacity: 0, y: -20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -20 }}
+                        className="mb-6 print:mb-2"
                       >
-                        {/* The "Pretty" UI (Underneath) */}
-                        <div 
-                          className="flex items-center gap-4 px-8 py-4 bg-white border-2 border-slate-100 rounded-3xl shadow-sm group-hover:border-indigo-200 transition-all cursor-pointer print:border-none print:shadow-none print:px-0 print:py-0"
-                        >
-                          <div className="p-2 bg-indigo-50 rounded-xl text-indigo-600 print:hidden">
-                            <Calendar size={20} />
-                          </div>
-                          <span className="text-base font-black text-slate-900 tracking-tight print:text-sm whitespace-nowrap">
-                            {(() => {
-                              if (!state.date) return 'Select Date';
-                              try {
-                                // Try parsing as yyyy-MM-dd
-                                const parsed = parse(state.date, 'yyyy-MM-dd', new Date());
-                                if (isNaN(parsed.getTime())) throw new Error('Invalid');
-                                return format(parsed, 'EEEE, d MMMM yyyy');
-                              } catch (e) {
-                                try {
-                                  // Fallback to parseISO if it's an old ISO string
-                                  const parsed = parseISO(state.date);
-                                  if (isNaN(parsed.getTime())) throw new Error('Invalid');
-                                  return format(parsed, 'EEEE, d MMMM yyyy');
-                                } catch (e2) {
-                                  return state.date;
-                                }
-                              }
-                            })()}
-                          </span>
+                        <div className="max-w-md mx-auto space-y-3">
+                          <SectionHeader 
+                            title="BRAND LOGO"
+                            icon={Upload}
+                            onToggle={() => updateState(prev => ({ ...prev, config: { ...prev.config, showLogo: false } }))}
+                            isVisible={state.config.showLogo}
+                            onReset={() => updateState(prev => ({ ...prev, logo: prev.isLogoLocked ? prev.logo : null }))}
+                            onLock={() => updateState(prev => ({ ...prev, isLogoLocked: !prev.isLogoLocked }))}
+                            isLocked={state.isLogoLocked}
+                            hideTitleInPrint
+                          />
+                          <label className="cursor-pointer group relative block w-full">
+                            <input type="file" className="hidden" onChange={handleLogoUpload} accept="image/*" />
+                            <div className={cn(
+                              "w-full h-32 rounded-3xl flex items-center justify-center transition-all duration-500 overflow-hidden print:h-32",
+                              !state.logo ? "border-2 border-dashed border-slate-200 text-slate-400 group-hover:border-indigo-400 group-hover:text-indigo-500 group-hover:bg-indigo-50/30 print:border-none" : "bg-white shadow-sm print:shadow-none print:bg-transparent"
+                            )}>
+                              {state.logo ? (
+                                <div className="relative h-full w-full">
+                                  <img src={state.logo} alt="Logo" className="h-full w-full object-contain p-2" referrerPolicy="no-referrer" />
+                                  {state.isLogoLocked && (
+                                    <div className="absolute top-2 left-2 p-1 bg-indigo-600/80 text-white rounded-lg backdrop-blur-sm print:hidden">
+                                      <Lock size={10} />
+                                    </div>
+                                  )}
+                                </div>
+                              ) : (
+                                <div className="flex flex-col items-center gap-2">
+                                  <Upload size={24} className="print:hidden" />
+                                  <span className="text-[10px] font-black uppercase tracking-[0.2em] print:hidden">Upload Brand Logo</span>
+                                </div>
+                              )}
+                            </div>
+                            {state.logo && (
+                              <div className="absolute -top-3 -right-2 flex flex-col gap-2 print:hidden z-10">
+                                <button 
+                                  onClick={(e) => { 
+                                    e.preventDefault(); 
+                                    if (state.isLogoLocked) {
+                                      showNotification("Logo is locked", "error");
+                                      return;
+                                    }
+                                    updateState(prev => ({ ...prev, logo: null })); 
+                                  }}
+                                  className="self-end p-1.5 bg-white border border-slate-200 rounded-full text-slate-400 hover:text-rose-500 hover:border-rose-200 shadow-lg transition-all"
+                                  title="Remove Logo"
+                                >
+                                  <X size={12} />
+                                </button>
+                              </div>
+                            )}
+                          </label>
                         </div>
-                        
-                        {/* The actual native input (Invisible but clickable on top) */}
-                        <input
-                          ref={dateInputRef}
-                          type="date"
-                          className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-50"
-                          value={state.date}
-                          onChange={(e) => updateState(prev => ({ ...prev, date: e.target.value }))}
-                        />
-                      </div>
-                      
-                      <button 
-                        onClick={() => updateState(prev => ({ ...prev, date: format(new Date(), 'yyyy-MM-dd') }))}
-                        className="p-2.5 bg-white border-2 border-slate-100 rounded-2xl text-indigo-600 hover:border-indigo-200 hover:bg-indigo-50 transition-all shadow-sm print:hidden"
-                        title="Set to Today"
-                      >
-                        <RotateCcw size={18} />
-                      </button>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
 
-                      <div className="h-px w-12 bg-slate-100 print:hidden" />
-                    </div>
+                  <div className="max-w-md mx-auto space-y-6">
+                    {/* Report Title Section */}
+                    <AnimatePresence>
+                      {state.config.showReportTitle && (
+                        <motion.div 
+                          initial={{ opacity: 0, y: -20 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: -20 }}
+                        >
+                          <div className="space-y-3">
+                            <SectionHeader 
+                              title="REPORT HEADER"
+                              icon={Edit3}
+                              onToggle={() => updateState(prev => ({ ...prev, config: { ...prev.config, showReportTitle: false } }))}
+                              isVisible={state.config.showReportTitle}
+                              onReset={() => updateState(prev => ({ ...prev, headerNote: '' }))}
+                              hideTitleInPrint
+                            />
+                            <input
+                              type="text"
+                              placeholder="Report Title / Header Note"
+                              className={cn(
+                                "nav-input w-full px-6 py-2.5 bg-white border border-slate-200 rounded-2xl text-base font-bold focus:outline-none focus:ring-8 focus:ring-indigo-500/5 focus:border-indigo-500 transition-all text-center text-slate-900 placeholder:text-slate-300 shadow-sm print:bg-transparent print:border-none print:text-2xl print:font-black print:py-0",
+                                !state.headerNote && 'print:hidden'
+                              )}
+                              value={state.headerNote}
+                              onChange={(e) => updateState(prev => ({ ...prev, headerNote: e.target.value }))}
+                              onKeyDown={handleKeyDown}
+                            />
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+
+                    {/* Date Section */}
+                    <AnimatePresence>
+                      {state.config.showDate && (
+                        <motion.div 
+                          initial={{ opacity: 0, y: -20 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: -20 }}
+                        >
+                          <div className="space-y-3">
+                            <SectionHeader 
+                              title="REPORT DATE"
+                              icon={Calendar}
+                              onToggle={() => updateState(prev => ({ ...prev, config: { ...prev.config, showDate: false } }))}
+                              isVisible={state.config.showDate}
+                              onReset={() => updateState(prev => ({ ...prev, date: format(new Date(), 'yyyy-MM-dd') }))}
+                              hideTitleInPrint
+                            />
+                            <div className="flex items-center justify-center gap-4 text-[10px] font-black text-slate-300 uppercase tracking-[0.3em] print:gap-2">
+                              <div className="h-px w-8 bg-slate-100 print:hidden" />
+                              <div 
+                                className="relative group"
+                                onClick={() => {
+                                  try {
+                                    dateInputRef.current?.showPicker();
+                                  } catch (e) {
+                                    dateInputRef.current?.click();
+                                  }
+                                }}
+                              >
+                                <div className="flex items-center gap-3 px-6 py-2.5 bg-white border-2 border-slate-100 rounded-2xl shadow-sm group-hover:border-indigo-200 transition-all cursor-pointer print:border-none print:shadow-none print:px-0 print:py-0">
+                                  <div className="p-1.5 bg-indigo-50 rounded-lg text-indigo-600 print:hidden">
+                                    <Calendar size={16} />
+                                  </div>
+                                  <span className="text-sm font-black text-slate-900 tracking-tight print:text-sm whitespace-nowrap">
+                                    {(() => {
+                                      if (!state.date) return 'Select Date';
+                                      try {
+                                        const parsed = parse(state.date, 'yyyy-MM-dd', new Date());
+                                        if (isNaN(parsed.getTime())) throw new Error('Invalid');
+                                        return format(parsed, 'EEEE, d MMMM yyyy');
+                                      } catch (e) {
+                                        try {
+                                          const parsed = parseISO(state.date);
+                                          if (isNaN(parsed.getTime())) throw new Error('Invalid');
+                                          return format(parsed, 'EEEE, d MMMM yyyy');
+                                        } catch (e2) {
+                                          return state.date;
+                                        }
+                                      }
+                                    })()}
+                                  </span>
+                                </div>
+                                <input
+                                  ref={dateInputRef}
+                                  type="date"
+                                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-50"
+                                  value={state.date}
+                                  onChange={(e) => updateState(prev => ({ ...prev, date: e.target.value }))}
+                                />
+                              </div>
+                              <div className="h-px w-8 bg-slate-100 print:hidden" />
+                            </div>
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
                   </div>
                 </div>
-                <div className="p-12 space-y-20 print:p-6 print:space-y-8">
-                  {/* Main Sections Grid */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-12 print:grid-cols-2 print:gap-6">
+                <div className="p-8 space-y-8 print:p-6 print:space-y-4">
+                  {/* Layout Controls - Top buttons removed */}
+
+                  {/* Main Sections Container */}
+                  <div className="flex flex-wrap gap-6 print:grid print:grid-cols-2 print:gap-4">
                     
                     {/* Cash Section */}
                     <AnimatePresence>
@@ -1418,33 +1729,36 @@ export default function App() {
                           initial={{ opacity: 0, height: 0 }}
                           animate={{ opacity: 1, height: 'auto' }}
                           exit={{ opacity: 0, height: 0 }}
-                          className="space-y-6"
+                          className="flex-1 min-w-[45%]"
+                          data-nav-section="cash"
                         >
-                          <SectionHeader 
-                            icon={Banknote}
-                            title={state.config.cashSectionTitle}
-                            onTitleChange={(val) => updateState(prev => ({ ...prev, config: { ...prev.config, cashSectionTitle: val } }))}
-                            onToggle={() => updateState(prev => ({ ...prev, config: { ...prev.config, showCashSection: false } }))}
-                            isVisible={state.config.showCashSection}
-                            onReset={() => resetSection('cashRows')}
-                            onAdd={addCashRow}
-                            resetOptions={[
-                              { label: 'Reset Quantities Only', onClick: resetCashQuantities },
-                              { label: 'Add Standard Denominations', onClick: addStandardDenominations }
-                            ]}
-                          />
+                          <div className="h-full flex flex-col space-y-6">
+                            <SectionHeader 
+                              icon={Banknote}
+                              title={state.config.cashSectionTitle}
+                              onTitleChange={(val) => updateState(prev => ({ ...prev, config: { ...prev.config, cashSectionTitle: val } }))}
+                              onToggle={() => updateState(prev => ({ ...prev, config: { ...prev.config, showCashSection: false } }))}
+                              isVisible={state.config.showCashSection}
+                              onReset={() => resetSection('cashRows')}
+                              onAdd={addCashRow}
+                              resetOptions={[
+                                { label: 'Reset Quantities Only', onClick: resetCashQuantities },
+                                { label: 'Add Standard Denominations', onClick: addStandardDenominations },
+                                { label: 'Full Section Reset', onClick: () => resetSection('cashRows') }
+                              ]}
+                            />
 
-                          <div className="overflow-hidden rounded-[2rem] print:rounded-none border border-slate-200 shadow-sm bg-white">
-                            <table className="w-full text-sm text-left">
-                              <thead className="bg-slate-50 text-slate-500 uppercase text-[9px] tracking-[0.2em] font-black border-b border-slate-100">
-                                <tr>
-                                  <th className="px-6 py-5 print:py-1 w-[30%]">Note</th>
-                                  <th className="px-6 py-5 text-center print:py-1 w-[25%]">Qty</th>
-                                  <th className="px-6 py-5 text-right print:py-1 w-[45%]">Total</th>
-                                  <th className="w-10"></th>
-                                </tr>
-                              </thead>
-                              <tbody className="divide-y divide-slate-100">
+                              <div className="flex-1 rounded-[2rem] border border-slate-200 shadow-sm bg-white">
+                                <table className="w-full text-sm text-left">
+                                  <thead className="bg-slate-50 text-slate-500 uppercase text-[9px] tracking-[0.2em] font-black border-b border-slate-200">
+                                    <tr>
+                                      <th className="px-4 sm:px-6 py-5 print:py-1">Note</th>
+                                      <th className="px-4 sm:px-6 py-5 text-center print:py-1">Qty</th>
+                                      <th className="px-4 sm:px-6 py-5 text-right print:py-1">Total</th>
+                                      <th className="w-10 print:hidden"></th>
+                                    </tr>
+                                  </thead>
+                                  <tbody className="divide-y divide-slate-200">
                                 <AnimatePresence mode="popLayout">
                                   {state.cashRows.map((row) => (
                           <motion.tr 
@@ -1455,9 +1769,9 @@ export default function App() {
                             exit={{ opacity: 0, x: -20 }}
                             className="group hover:bg-indigo-50/30 transition-colors"
                           >
-                            <td className="px-6 py-4 print:py-1">
+                            <td className="px-4 sm:px-6 py-4 print:py-1">
                               <MathInput 
-                                className="nav-input w-full bg-transparent focus:outline-none font-bold text-slate-900 print:text-xs"
+                                className="nav-input w-full bg-transparent focus:outline-none font-black text-slate-900 print:text-xs"
                                 value={row.denomination || ''}
                                 showCommas={false}
                                 onChange={(val) => {
@@ -1470,7 +1784,7 @@ export default function App() {
                             </td>
                             <td className="px-4 py-4 text-center print:py-1">
                               <MathInput 
-                                className="nav-input w-full max-w-[140px] mx-auto text-center bg-white border border-slate-100 rounded-xl py-1.5 focus:border-indigo-400 focus:outline-none font-mono font-bold text-slate-900 shadow-sm print:bg-transparent print:border-none print:shadow-none"
+                                className="nav-input w-full mx-auto text-center bg-white border border-slate-100 rounded-xl py-1.5 focus:border-indigo-400 focus:outline-none font-mono font-black text-slate-900 shadow-sm print:bg-transparent print:border-none print:shadow-none"
                                 value={row.qty || ''}
                                 showCommas={false}
                                 onChange={(val) => {
@@ -1481,10 +1795,10 @@ export default function App() {
                                 }}
                               />
                             </td>
-                            <td className="px-6 py-4 text-right font-mono font-bold text-slate-900 print:py-1">
+                            <td className="px-4 sm:px-6 py-4 text-right font-mono font-black text-slate-900 print:py-1">
                               {(row.denomination * row.qty).toLocaleString('en-IN')}
                             </td>
-                            <td className="px-2">
+                            <td className="px-2 print:hidden">
                               <button 
                                 onClick={() => updateState(prev => ({ ...prev, cashRows: prev.cashRows.filter(r => r.id !== row.id) }))}
                                 className="p-1.5 text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all"
@@ -1496,9 +1810,9 @@ export default function App() {
                         ))}
                       </AnimatePresence>
                           <tr className="bg-slate-50 text-slate-900 font-black border-t border-slate-200">
-                            <td colSpan={2} className="px-6 py-4 uppercase tracking-[0.2em] text-[13px] print:py-1.5">Cash Total</td>
-                            <td className="px-6 py-4 text-right font-mono text-[17px] print:py-1.5 print:text-xs">{cashTotal.toLocaleString('en-IN')}</td>
-                            <td></td>
+                            <td colSpan={2} className="px-4 sm:px-6 py-5 uppercase tracking-tight text-sm font-black print:py-1.5 print-total">CASH TOTAL</td>
+                            <td className="px-4 sm:px-6 py-5 text-right uppercase text-sm font-black tracking-tight print:py-1.5 print-total">{cashTotal.toLocaleString('en-IN')}</td>
+                            <td className="print:hidden"></td>
                           </tr>
                           <AnimatePresence mode="popLayout">
                             {state.extraRows.map((row) => (
@@ -1510,11 +1824,11 @@ export default function App() {
                             exit={{ opacity: 0, x: -20 }}
                             className="group hover:bg-slate-50/50 transition-colors"
                           >
-                            <td className="px-6 py-4 print:py-1 min-w-[120px]">
+                            <td className="px-4 sm:px-6 py-4 print:py-1 min-w-[120px]">
                               <input 
                                 type="text" 
                                 placeholder="Label"
-                                className="nav-input w-full bg-transparent focus:outline-none font-bold text-slate-800 placeholder:text-slate-400 print:text-xs"
+                                className="nav-input w-full bg-transparent focus:outline-none font-black text-slate-800 placeholder:text-slate-400 print:text-xs"
                                 value={row.label}
                                 onChange={(e) => {
                                   updateState(prev => ({
@@ -1522,11 +1836,12 @@ export default function App() {
                                     extraRows: prev.extraRows.map(r => r.id === row.id ? { ...r, label: e.target.value } : r)
                                   }));
                                 }}
+                                onKeyDown={handleKeyDown}
                               />
                             </td>
-                            <td className="px-6 py-4 text-center print:py-1">
+                            <td className="px-4 sm:px-6 py-4 text-center print:py-1">
                               <MathInput 
-                                className="nav-input w-full max-w-[80px] mx-auto text-center bg-transparent focus:outline-none font-bold text-slate-800 placeholder:text-slate-400 print:text-xs"
+                                className="nav-input w-full mx-auto text-center bg-transparent focus:outline-none font-black text-slate-800 placeholder:text-slate-400 print:text-xs"
                                 value={row.qty || ''}
                                 showCommas={false}
                                 onChange={(val) => {
@@ -1537,9 +1852,9 @@ export default function App() {
                                 }}
                               />
                             </td>
-                            <td className="px-6 py-4 text-right print:py-1">
+                            <td className="px-4 sm:px-6 py-4 text-right print:py-1">
                               <MathInput 
-                                className="nav-input w-full text-right bg-transparent focus:outline-none font-bold text-slate-900 placeholder:text-slate-400 print:text-xs"
+                                className="nav-input w-full text-right bg-transparent focus:outline-none font-black text-slate-900 placeholder:text-slate-400 print:text-xs"
                                 value={row.amount || ''}
                                 onChange={(val) => {
                                   updateState(prev => ({
@@ -1549,7 +1864,7 @@ export default function App() {
                                 }}
                               />
                             </td>
-                            <td className="px-2">
+                            <td className="px-2 print:hidden">
                               <button 
                                 onClick={() => updateState(prev => ({ ...prev, extraRows: prev.extraRows.filter(r => r.id !== row.id) }))}
                                 className="p-1.5 text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all"
@@ -1561,21 +1876,22 @@ export default function App() {
                         ))}
                       </AnimatePresence>
                       <tr className="bg-slate-50 text-slate-900 font-black border-t border-slate-200">
-                        <td colSpan={2} className="px-6 py-4 uppercase tracking-[0.2em] text-[13px] print:py-1.5">
+                        <td colSpan={2} className="px-4 sm:px-6 py-5 uppercase tracking-tight text-sm font-black print:py-1.5 print-total">
                           <div className="flex items-center gap-4">
-                            Grand Total 
-                            <button onClick={addExtraRow} className="text-[9px] font-black bg-indigo-600 text-white px-3 py-1 rounded-full hover:bg-indigo-700 transition-all shadow-md shadow-indigo-200 print:hidden">+ ADD ROW</button>
+                            GRAND TOTAL 
+                            <button onClick={() => addExtraRow(1)} className="text-[9px] font-black bg-indigo-600 text-white px-3 py-1 rounded-full hover:bg-indigo-700 transition-all shadow-md shadow-indigo-200 print:hidden">+ ADD ROW</button>
                           </div>
                         </td>
-                        <td className="px-6 py-4 text-right font-mono text-[17px] print:py-1.5 print:text-xs">{grandTotal.toLocaleString('en-IN')}</td>
-                        <td></td>
+                        <td className="px-4 sm:px-6 py-5 text-right uppercase text-sm font-black tracking-tight print:py-1.5 print-total">{grandTotal.toLocaleString('en-IN')}</td>
+                        <td className="print:hidden"></td>
                       </tr>
                     </tbody>
                   </table>
                 </div>
-              </motion.section>
-            )}
-          </AnimatePresence>
+              </div>
+            </motion.section>
+              )}
+            </AnimatePresence>
 
               {/* Outlet Section */}
               <AnimatePresence>
@@ -1584,37 +1900,40 @@ export default function App() {
                     initial={{ opacity: 0, height: 0 }}
                     animate={{ opacity: 1, height: 'auto' }}
                     exit={{ opacity: 0, height: 0 }}
-                    className="space-y-6"
+                    className="flex-1 min-w-[45%]"
+                    data-nav-section="outlet"
                   >
-                    <SectionHeader 
-                      title={state.config.outletSectionTitle}
-                      onTitleChange={(val) => updateState(prev => ({ ...prev, config: { ...prev.config, outletSectionTitle: val } }))}
-                      icon={Store}
-                      onAdd={addOutletRow}
-                      onReset={() => resetSection('outletRows')}
-                      onToggle={() => updateState(prev => ({ ...prev, config: { ...prev.config, showOutletSection: false } }))}
-                      isVisible={state.config.showOutletSection}
-                      resetOptions={[
-                        { label: 'Reset Amounts Only', onClick: resetOutletAmounts },
-                        { label: 'Reset Names Only', onClick: resetOutletNames }
-                      ]}
-                    />
+                    <div className="h-full flex flex-col space-y-6">
+                      <SectionHeader 
+                        title={state.config.outletSectionTitle}
+                        onTitleChange={(val) => updateState(prev => ({ ...prev, config: { ...prev.config, outletSectionTitle: val } }))}
+                        icon={Store}
+                        onAdd={addOutletRow}
+                        onReset={() => resetSection('outletRows')}
+                        onToggle={() => updateState(prev => ({ ...prev, config: { ...prev.config, showOutletSection: false } }))}
+                        isVisible={state.config.showOutletSection}
+                        resetOptions={[
+                          { label: 'Reset Amounts Only', onClick: resetOutletAmounts },
+                          { label: 'Reset Names Only', onClick: resetOutletNames },
+                          { label: 'Full Section Reset', onClick: () => resetSection('outletRows') }
+                        ]}
+                      />
 
-                    <div className="overflow-hidden rounded-[2rem] print:rounded-none border border-slate-200 shadow-sm bg-white">
-                      <table className="w-full text-sm text-left">
-                        <thead className="bg-slate-50 text-slate-500 uppercase text-[9px] tracking-[0.2em] font-black border-b border-slate-100">
-                          <tr>
-                            <th className="px-6 py-5 print:py-1 w-[75%]">
-                              <EditableTableLabel 
-                                value={state.config.outletColumnLabel}
-                                onChange={(val) => updateState(prev => ({ ...prev, config: { ...prev.config, outletColumnLabel: val } }))}
-                              />
-                            </th>
-                            <th className="px-6 py-5 text-right print:py-1 w-[25%]">Amount</th>
-                            <th className="w-10"></th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100">
+                        <div className="flex-1 rounded-[2rem] border border-slate-200 shadow-sm bg-white">
+                          <table className="w-full text-sm text-left">
+                            <thead className="bg-slate-50 text-slate-500 uppercase text-[9px] tracking-[0.2em] font-black border-b border-slate-200">
+                              <tr>
+                                <th className="px-4 sm:px-6 py-5 print:py-1">
+                                  <EditableTableLabel 
+                                    value={state.config.outletColumnLabel}
+                                    onChange={(val) => updateState(prev => ({ ...prev, config: { ...prev.config, outletColumnLabel: val } }))}
+                                  />
+                                </th>
+                                <th className="px-4 sm:px-6 py-5 text-right print:py-1">Amount</th>
+                                <th className="w-10 print:hidden"></th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-200">
                           <AnimatePresence mode="popLayout">
                             {state.outletRows.map((row) => (
                               <motion.tr 
@@ -1625,11 +1944,11 @@ export default function App() {
                                 exit={{ opacity: 0, x: 20 }}
                                 className="group hover:bg-indigo-50/30 transition-colors"
                               >
-                                <td className="px-6 py-4 print:py-1 min-w-[120px]">
+                                <td className="px-4 sm:px-6 py-4 print:py-1 min-w-[120px]">
                                   <input 
                                     type="text" 
                                     placeholder="Outlet name"
-                                    className="nav-input w-full bg-transparent focus:outline-none font-bold text-slate-900 placeholder:text-slate-400 print:text-xs"
+                                    className="nav-input w-full bg-transparent focus:outline-none font-black text-slate-900 placeholder:text-slate-400 print:text-xs"
                                     value={row.name}
                                     onChange={(e) => {
                                       updateState(prev => ({
@@ -1637,11 +1956,12 @@ export default function App() {
                                         outletRows: prev.outletRows.map(r => r.id === row.id ? { ...r, name: e.target.value } : r)
                                       }));
                                     }}
+                                    onKeyDown={handleKeyDown}
                                   />
                                 </td>
-                                <td className="px-6 py-4 text-right print:py-1">
+                                <td className="px-4 sm:px-6 py-4 text-right print:py-1">
                                   <MathInput 
-                                    className="nav-input w-full text-right bg-transparent focus:outline-none font-mono font-bold text-slate-900 print:text-xs"
+                                    className="nav-input w-full text-right bg-transparent focus:outline-none font-mono font-black text-slate-900 print:text-xs"
                                     value={row.amount || ''}
                                     onChange={(val) => {
                                       updateState(prev => ({
@@ -1651,7 +1971,7 @@ export default function App() {
                                     }}
                                   />
                                 </td>
-                                <td className="px-2">
+                                <td className="px-2 print:hidden">
                                   <button 
                                     onClick={() => updateState(prev => ({ ...prev, outletRows: prev.outletRows.filter(r => r.id !== row.id) }))}
                                     className="p-1.5 text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all"
@@ -1663,24 +1983,24 @@ export default function App() {
                             ))}
                           </AnimatePresence>
                           <tr className="bg-slate-50 text-slate-900 font-black border-t border-slate-200">
-                            <td className="px-6 py-4 uppercase tracking-[0.2em] text-[13px] print:py-1.5">
+                            <td className="px-4 sm:px-6 py-5 uppercase tracking-tight text-sm font-black print:py-1.5 print-total">
                               <EditableTableLabel 
                                 value={state.config.outletTotalLabel}
                                 onChange={(val) => updateState(prev => ({ ...prev, config: { ...prev.config, outletTotalLabel: val } }))}
                               />
                             </td>
-                            <td className="px-6 py-4 text-right font-mono text-[17px] print:py-1.5 print:text-xs">{outletTotal.toLocaleString('en-IN')}</td>
+                            <td className="px-4 sm:px-6 py-5 text-right uppercase text-sm font-black tracking-tight print:py-1.5 print-total">{outletTotal.toLocaleString('en-IN')}</td>
                             <td></td>
                           </tr>
                           {state.config.showBalanceRow && (
                             <tr className="bg-white font-black border-t border-slate-200">
-                              <td className="px-6 py-4 text-slate-700 uppercase tracking-[0.2em] text-[13px] print:py-1.5">
+                              <td className="px-4 sm:px-6 py-5 text-slate-700 uppercase tracking-tight text-sm font-black print:py-1.5 print-total">
                                 <div className="flex items-center gap-4">
                                   <div className={cn(
-                                    "w-2.5 h-2.5 rounded-full shadow-sm",
+                                    "w-3 h-3 rounded-full shadow-sm",
                                     balance > 0 ? 'bg-emerald-500 shadow-emerald-200' : balance < 0 ? 'bg-rose-500 shadow-rose-200' : 'bg-slate-300'
                                   )} />
-                                  <span>BALANCED</span>
+                                  <span>{balance > 0 ? 'OVER' : balance < 0 ? 'LESS' : 'BALANCED'}</span>
                                   <button 
                                     onClick={() => updateState(prev => ({ ...prev, config: { ...prev.config, showBalanceRow: false } }))}
                                     className="print:hidden text-slate-300 hover:text-indigo-600 transition-colors"
@@ -1690,7 +2010,7 @@ export default function App() {
                                 </div>
                               </td>
                               <td className={cn(
-                                "px-6 py-4 text-right font-mono text-[17px] print:py-1.5 print:text-xs",
+                                "px-4 sm:px-6 py-5 text-right uppercase text-sm font-black tracking-tight print:py-1.5 print-total",
                                 balance > 0 ? 'text-emerald-600' : balance < 0 ? 'text-rose-600' : 'text-slate-700'
                               )}>
                                 {balance > 0 ? `+${balance.toLocaleString('en-IN')}` : balance.toLocaleString('en-IN')}
@@ -1701,7 +2021,8 @@ export default function App() {
                         </tbody>
                       </table>
                     </div>
-                  </motion.section>
+                  </div>
+                </motion.section>
                 )}
               </AnimatePresence>
             </div>
@@ -1713,19 +2034,23 @@ export default function App() {
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: 20 }}
-                  className="space-y-8 pt-12 border-t border-slate-100"
+                  className="w-full pt-8 border-t border-slate-50 print:pt-4"
+                  data-nav-section="signatures"
                 >
-                  <SectionHeader 
-                    title={state.config.signaturesSectionTitle}
-                    onTitleChange={(val) => updateState(prev => ({ ...prev, config: { ...prev.config, signaturesSectionTitle: val } }))}
-                    icon={PenTool}
-                    onAdd={addSignatureRow}
-                    onReset={() => resetSection('signatureRows')}
-                    onToggle={() => updateState(prev => ({ ...prev, config: { ...prev.config, showSignaturesSection: false } }))}
-                    isVisible={state.config.showSignaturesSection}
-                  />
+                  <div className="space-y-6">
+                    <SectionHeader 
+                      title={state.config.signaturesSectionTitle}
+                      onTitleChange={(val) => updateState(prev => ({ ...prev, config: { ...prev.config, signaturesSectionTitle: val } }))}
+                      icon={PenTool}
+                      onAdd={addSignatureRow}
+                      onReset={() => resetSection('signatureRows')}
+                      onToggle={() => updateState(prev => ({ ...prev, config: { ...prev.config, showSignaturesSection: false } }))}
+                      isVisible={state.config.showSignaturesSection}
+                      onLock={() => updateState(prev => ({ ...prev, isSignaturesLocked: !prev.isSignaturesLocked }))}
+                      isLocked={state.isSignaturesLocked}
+                    />
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-10 print:grid-cols-3 print:gap-4">
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 print:grid-cols-3 print:gap-4">
                     <AnimatePresence mode="popLayout">
                       {state.signatureRows.map((row) => (
                         <motion.div 
@@ -1739,7 +2064,13 @@ export default function App() {
                           <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-50/30 rounded-bl-full -mr-16 -mt-16 transition-all group-hover:bg-indigo-100/50" />
                           
                           <button 
-                            onClick={() => updateState(prev => ({ ...prev, signatureRows: prev.signatureRows.filter(r => r.id !== row.id) }))}
+                            onClick={() => {
+                              if (state.isSignaturesLocked) {
+                                showNotification("Signatures are locked", "error");
+                                return;
+                              }
+                              updateState(prev => ({ ...prev, signatureRows: prev.signatureRows.filter(r => r.id !== row.id) }));
+                            }}
                             className="absolute top-6 right-6 p-2 bg-white border border-slate-200 rounded-full text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all shadow-lg z-10 print:hidden"
                           >
                             <Trash2 size={14} />
@@ -1749,14 +2080,19 @@ export default function App() {
                             <input 
                               type="text" 
                               placeholder="Type name..."
-                              className="nav-input w-full bg-transparent border-b-2 border-slate-200 py-2 focus:outline-none focus:border-indigo-500 transition-all text-sm font-bold text-slate-900 placeholder:text-slate-300 print:text-xs print:py-0"
+                              className={cn(
+                                "nav-input w-full bg-transparent border-b-2 border-slate-200 py-2 focus:outline-none focus:border-indigo-500 transition-all text-sm font-bold text-slate-900 placeholder:text-slate-300 print:text-xs print:py-0",
+                                state.isSignaturesLocked && "opacity-70 cursor-not-allowed border-slate-100"
+                              )}
                               value={row.name}
+                              disabled={state.isSignaturesLocked}
                               onChange={(e) => {
                                 updateState(prev => ({
                                   ...prev,
-                                  signatureRows: prev.signatureRows.map(r => r.id === row.id ? { ...r, name: e.target.value } : r)
+                                  signatureRows: prev.signatureRows.map(r => r.id === row.id ? { ...r, name: e.target.value.toUpperCase() } : r)
                                 }));
                               }}
+                              onKeyDown={handleKeyDown}
                             />
                           </div>
                           <div className="space-y-3 print:space-y-1">
@@ -1764,14 +2100,19 @@ export default function App() {
                             <input 
                               type="text" 
                               placeholder="Type title..."
-                              className="nav-input w-full bg-transparent border-b-2 border-slate-200 py-2 focus:outline-none focus:border-indigo-500 transition-all text-sm font-bold text-slate-600 placeholder:text-slate-300 print:text-xs print:py-0"
+                              className={cn(
+                                "nav-input w-full bg-transparent border-b-2 border-slate-200 py-2 focus:outline-none focus:border-indigo-500 transition-all text-sm font-bold text-slate-600 placeholder:text-slate-300 print:text-xs print:py-0",
+                                state.isSignaturesLocked && "opacity-70 cursor-not-allowed border-slate-100"
+                              )}
                               value={row.designation}
+                              disabled={state.isSignaturesLocked}
                               onChange={(e) => {
                                 updateState(prev => ({
                                   ...prev,
-                                  signatureRows: prev.signatureRows.map(r => r.id === row.id ? { ...r, designation: e.target.value } : r)
+                                  signatureRows: prev.signatureRows.map(r => r.id === row.id ? { ...r, designation: e.target.value.toUpperCase() } : r)
                                 }));
                               }}
+                              onKeyDown={handleKeyDown}
                             />
                           </div>
                           <div className="space-y-6 print:space-y-1">
@@ -1790,7 +2131,8 @@ export default function App() {
                       ))}
                     </AnimatePresence>
                   </div>
-                </motion.section>
+                </div>
+              </motion.section>
               )}
             </AnimatePresence>
 
@@ -1801,72 +2143,77 @@ export default function App() {
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: 20 }}
-                  className="space-y-6 pt-12 border-t border-slate-100 print:pt-4"
+                  className="w-full pt-8 border-t border-slate-100 print:pt-4"
+                  data-nav-section="notes"
                 >
-                  <SectionHeader 
-                    title={state.config.notesSectionTitle}
-                    onTitleChange={(val) => updateState(prev => ({ ...prev, config: { ...prev.config, notesSectionTitle: val } }))}
-                    icon={FileText}
-                    onAdd={addNoteRow}
-                    onReset={() => resetSection('noteRows')}
-                    onToggle={() => updateState(prev => ({ ...prev, config: { ...prev.config, showNotesSection: false } }))}
-                    isVisible={state.config.showNotesSection}
-                  />
-                  <div className="space-y-3">
-                    <AnimatePresence mode="popLayout">
-                      {state.noteRows.map((row, index) => (
-                        <motion.div 
-                          key={row.id}
-                          layout
-                          initial={{ opacity: 0, x: -10 }}
-                          animate={{ opacity: 1, x: 0 }}
-                          exit={{ opacity: 0, x: 10 }}
-                          className={cn(
-                            "flex items-center gap-4 group",
-                            !row.text && 'print:hidden'
-                          )}
-                        >
-                          <div className="flex-shrink-0 w-8 h-8 rounded-xl bg-indigo-50 flex items-center justify-center text-indigo-500 font-black text-xs print:hidden">
-                            #
-                          </div>
-                          <input 
-                            type="text"
-                            placeholder="Add a note..."
-                            className="nav-input flex-grow bg-transparent border-b border-slate-100 focus:border-indigo-400 focus:outline-none py-2 text-sm font-bold text-slate-700 placeholder:text-slate-300 transition-all print:text-xs print:py-0"
-                            value={row.text}
-                            onChange={(e) => {
-                              updateState(prev => ({
-                                ...prev,
-                                noteRows: prev.noteRows.map(n => n.id === row.id ? { ...n, text: e.target.value } : n)
-                              }));
-                            }}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') {
-                                e.preventDefault();
-                                addNoteRow();
-                              } else if (e.key === 'Backspace' && row.text === '' && state.noteRows.length > 1) {
-                                e.preventDefault();
-                                updateState(prev => ({
-                                  ...prev,
-                                  noteRows: prev.noteRows.filter(n => n.id !== row.id)
-                                }));
-                              }
-                            }}
-                            autoFocus={index === state.noteRows.length - 1 && index > 0}
-                          />
-                          <button 
-                            onClick={() => updateState(prev => ({ ...prev, noteRows: prev.noteRows.filter(n => n.id !== row.id) }))}
-                            className="p-1.5 text-slate-300 hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-all print:hidden"
-                          >
-                            <Trash2 size={16} />
-                          </button>
-                        </motion.div>
-                      ))}
-                    </AnimatePresence>
-                  </div>
-                </motion.section>
+                  <div className="space-y-6">
+                    <SectionHeader 
+                      title={state.config.notesSectionTitle}
+                      onTitleChange={(val) => updateState(prev => ({ ...prev, config: { ...prev.config, notesSectionTitle: val } }))}
+                      icon={FileText}
+                      onAdd={addNoteRow}
+                      onReset={() => resetSection('noteRows')}
+                      onToggle={() => updateState(prev => ({ ...prev, config: { ...prev.config, showNotesSection: false } }))}
+                      isVisible={state.config.showNotesSection}
+                    />
+                      <div className="space-y-3">
+                        <AnimatePresence mode="popLayout">
+                          {state.noteRows.map((row, index) => (
+                            <motion.div 
+                              key={row.id}
+                              layout
+                              initial={{ opacity: 0, x: -10 }}
+                              animate={{ opacity: 1, x: 0 }}
+                              exit={{ opacity: 0, x: 10 }}
+                              className={cn(
+                                "flex items-center gap-4 group",
+                                !row.text && 'print:hidden'
+                              )}
+                            >
+                              <div className="flex-shrink-0 w-8 h-8 rounded-xl bg-indigo-50 flex items-center justify-center text-indigo-500 font-black text-xs print:hidden">
+                                #
+                              </div>
+                              <input 
+                                type="text"
+                                placeholder="Add a note..."
+                                className="nav-input flex-grow bg-transparent border-b border-slate-100 focus:border-indigo-400 focus:outline-none py-2 text-sm font-bold text-slate-700 placeholder:text-slate-300 transition-all print:text-xs print:py-0"
+                                value={row.text}
+                                onChange={(e) => {
+                                  updateState(prev => ({
+                                    ...prev,
+                                    noteRows: prev.noteRows.map(n => n.id === row.id ? { ...n, text: e.target.value } : n)
+                                  }));
+                                }}
+                                onKeyDown={(e) => {
+                                  handleKeyDown(e);
+                                  if (e.key === 'Enter') {
+                                    e.preventDefault();
+                                    addNoteRow();
+                                  } else if (e.key === 'Backspace' && row.text === '' && state.noteRows.length > 1) {
+                                    e.preventDefault();
+                                    updateState(prev => ({
+                                      ...prev,
+                                      noteRows: prev.noteRows.filter(n => n.id !== row.id)
+                                    }));
+                                  }
+                                }}
+                                autoFocus={index === state.noteRows.length - 1 && index > 0}
+                              />
+                              <button 
+                                onClick={() => updateState(prev => ({ ...prev, noteRows: prev.noteRows.filter(n => n.id !== row.id) }))}
+                                className="p-1.5 text-slate-300 hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-all print:hidden"
+                              >
+                                <Trash2 size={16} />
+                              </button>
+                            </motion.div>
+                          ))}
+                        </AnimatePresence>
+                      </div>
+                    </div>
+                  </motion.section>
               )}
             </AnimatePresence>
+          </div>
 
             {/* Layout Controls */}
             <div className="flex flex-wrap gap-3 print:hidden py-12 border-t border-slate-100">
@@ -1891,6 +2238,30 @@ export default function App() {
                 </div>
               </div>
               
+              {!state.config.showLogo && (
+                <button 
+                  onClick={() => updateState(prev => ({ ...prev, config: { ...prev.config, showLogo: true } }))}
+                  className="flex items-center gap-2 px-5 py-2 text-[10px] font-black bg-white text-indigo-600 rounded-xl border border-indigo-100 hover:bg-indigo-50 transition-all shadow-sm uppercase tracking-widest"
+                >
+                  <Eye size={14} /> Show Brand Logo
+                </button>
+              )}
+              {!state.config.showReportTitle && (
+                <button 
+                  onClick={() => updateState(prev => ({ ...prev, config: { ...prev.config, showReportTitle: true } }))}
+                  className="flex items-center gap-2 px-5 py-2 text-[10px] font-black bg-white text-indigo-600 rounded-xl border border-indigo-100 hover:bg-indigo-50 transition-all shadow-sm uppercase tracking-widest"
+                >
+                  <Eye size={14} /> Show Report Header
+                </button>
+              )}
+              {!state.config.showDate && (
+                <button 
+                  onClick={() => updateState(prev => ({ ...prev, config: { ...prev.config, showDate: true } }))}
+                  className="flex items-center gap-2 px-5 py-2 text-[10px] font-black bg-white text-indigo-600 rounded-xl border border-indigo-100 hover:bg-indigo-50 transition-all shadow-sm uppercase tracking-widest"
+                >
+                  <Eye size={14} /> Show Report Date
+                </button>
+              )}
               {!state.config.showCashSection && (
                 <button 
                   onClick={() => updateState(prev => ({ ...prev, config: { ...prev.config, showCashSection: true } }))}
@@ -1932,12 +2303,17 @@ export default function App() {
                 </button>
               )}
             </div>
-          </div>
-          
-          {/* Footer Actions */}
+            
+            {/* Footer Actions */}
           <div className="p-10 bg-slate-50/50 border-t border-slate-100 flex flex-wrap gap-6 justify-center print:hidden">
             <button 
-              onClick={resetAll}
+              onClick={() => {
+                setConfirmAction({
+                  title: 'Reset All Data',
+                  message: 'Are you sure you want to reset all data? This will clear all current entries and cannot be undone.',
+                  onConfirm: resetAll
+                });
+              }}
               className="px-8 py-3 bg-white border border-rose-100 text-rose-600 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-rose-50 transition-all shadow-sm flex items-center gap-3"
             >
               <RotateCcw size={16} /> Reset All
@@ -1947,18 +2323,11 @@ export default function App() {
 
             <div className="flex gap-3">
               <button 
-                onClick={handleSaveData}
+                onClick={handleCreateShortcut}
                 className="px-8 py-3 bg-white border border-indigo-100 text-indigo-600 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-indigo-50 transition-all shadow-sm flex items-center gap-3"
               >
-                <FileDown size={16} /> Save to Device
+                <FileDown size={16} /> Create Shortcut
               </button>
-
-              <label className="cursor-pointer">
-                <input type="file" className="hidden" onChange={handleLoadData} accept=".json" />
-                <div className="px-8 py-3 bg-white border border-indigo-100 text-indigo-600 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-indigo-50 transition-all shadow-sm flex items-center gap-3">
-                  <FileUp size={16} /> Load from Device
-                </div>
-              </label>
             </div>
 
             <div className="h-10 w-px bg-slate-200 mx-2" />
@@ -1992,17 +2361,17 @@ export default function App() {
               </button>
 
               <button 
-                onClick={handleSavePdf}
-                className="px-8 py-3 bg-white border border-rose-100 text-rose-600 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-rose-50 transition-all shadow-sm flex items-center gap-3"
-              >
-                <Download size={16} /> PDF
-              </button>
-
-              <button 
                 onClick={handlePrint}
                 className="px-8 py-3 bg-slate-800 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-slate-900 transition-all shadow-xl flex items-center gap-3"
               >
                 <Printer size={16} /> Print
+              </button>
+
+              <button 
+                onClick={() => setShowInstructions(true)}
+                className="px-8 py-3 bg-indigo-50 text-indigo-600 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-indigo-100 transition-all shadow-sm flex items-center gap-3"
+              >
+                <HelpCircle size={16} /> Instructions
               </button>
             </div>
             <div className="mt-8 border-t border-slate-100" />
@@ -2037,31 +2406,156 @@ export default function App() {
                 </button>
                 <div className="mb-8">
                   <h3 className="text-xl font-black text-slate-900 uppercase tracking-widest mb-2">Report QR Code</h3>
-                  <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Scan to view digital copy</p>
+                  <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Scan to view digital copy</p>
                 </div>
-                <div className="bg-white p-6 rounded-3xl shadow-inner inline-block mb-8 border border-slate-100">
-                  <QRCodeSVG 
-                    value={window.location.href} 
-                    size={200}
-                    level="H"
-                    includeMargin={false}
-                  />
+                <div className="bg-white p-6 rounded-3xl shadow-inner inline-block mb-8 border border-slate-100 min-h-[200px] flex items-center justify-center">
+                  {isQrTooLarge ? (
+                    <div className="text-rose-500 p-4 max-w-[200px]">
+                      <AlertCircle className="mx-auto mb-2" size={32} />
+                      <p className="text-[10px] font-black uppercase tracking-widest leading-relaxed">
+                        Report too large for QR code. Please use the Share button below.
+                      </p>
+                    </div>
+                  ) : (
+                    <QRCodeSVG 
+                      value={shareUrl} 
+                      size={200}
+                      level="M"
+                      includeMargin={false}
+                    />
+                  )}
                 </div>
-                <button 
-                  onClick={() => {
-                    navigator.share?.({
-                      title: 'Daily Finance Report',
-                      text: `Check out the report for ${state.date}`,
-                      url: window.location.href
-                    }).catch(() => {
-                      navigator.clipboard.writeText(window.location.href);
+                <div className="flex flex-col gap-3 w-full">
+                  <button 
+                    onClick={() => {
+                      if (navigator.share) {
+                        navigator.share({
+                          title: 'Daily Finance Report',
+                          text: `Check out the report for ${state.date}`,
+                          url: shareUrl
+                        }).catch(() => {
+                          navigator.clipboard.writeText(shareUrl);
+                          showNotification("Link copied to clipboard");
+                        });
+                      } else {
+                        navigator.clipboard.writeText(shareUrl);
+                        showNotification("Link copied to clipboard");
+                      }
+                    }}
+                    className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-black text-xs uppercase tracking-[0.2em] hover:bg-indigo-700 transition-all shadow-xl shadow-indigo-200 flex items-center justify-center gap-3"
+                  >
+                    <Share2 size={18} /> Share Report
+                  </button>
+                  <button 
+                    onClick={() => {
+                      navigator.clipboard.writeText(shareUrl);
                       showNotification("Link copied to clipboard");
-                    });
-                  }}
-                  className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-black text-xs uppercase tracking-[0.2em] hover:bg-indigo-700 transition-all shadow-xl shadow-indigo-200 flex items-center justify-center gap-3"
-                >
-                  <Share2 size={18} /> Share Report
-                </button>
+                    }}
+                    className="w-full py-3 bg-slate-50 text-slate-600 rounded-2xl font-black text-[10px] uppercase tracking-[0.2em] hover:bg-slate-100 transition-all flex items-center justify-center gap-3 border border-slate-200"
+                  >
+                    <FileText size={16} /> Copy Link
+                  </button>
+                </div>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
+
+        {/* Confirmation Modal */}
+        <ConfirmationModal 
+          isOpen={!!confirmAction}
+          onClose={() => setConfirmAction(null)}
+          onConfirm={confirmAction?.onConfirm || (() => {})}
+          title={confirmAction?.title || ''}
+          message={confirmAction?.message || ''}
+        />
+
+        {/* Instructions Modal */}
+        <AnimatePresence>
+          {showInstructions && (
+            <div className="fixed inset-0 z-[100] flex items-center justify-center p-6">
+              <motion.div 
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.2 }}
+                onClick={() => setShowInstructions(false)}
+                className="absolute inset-0 bg-slate-950/60"
+              />
+              <motion.div 
+                initial={{ opacity: 0, scale: 0.95, y: 10 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.95, y: 10 }}
+                transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+                className="relative bg-white p-10 rounded-[3rem] shadow-2xl max-w-2xl w-full border border-slate-100 overflow-hidden"
+              >
+                <div className="absolute top-0 right-0 w-40 h-40 bg-indigo-50/50 rounded-bl-full -mr-20 -mt-20" />
+                
+                <div className="relative z-10">
+                  <div className="flex items-center gap-4 mb-8">
+                    <div className="p-3 bg-indigo-600 text-white rounded-2xl shadow-lg shadow-indigo-200">
+                      <HelpCircle size={24} />
+                    </div>
+                    <div>
+                      <h3 className="text-2xl font-black text-slate-900 uppercase tracking-widest">How to Use</h3>
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.3em]">App Features & Instructions</p>
+                    </div>
+                  </div>
+
+                  <div className="space-y-6 max-h-[60vh] overflow-y-auto pr-4 custom-scrollbar">
+                    <section className="space-y-3">
+                      <h4 className="text-xs font-black text-indigo-600 uppercase tracking-widest flex items-center gap-2">
+                        <div className="w-1.5 h-1.5 bg-indigo-600 rounded-full" /> Data Persistence
+                      </h4>
+                      <p className="text-sm text-slate-600 leading-relaxed">
+                        The app <strong>automatically saves</strong> your work every second. Even if you close the browser or your PC shuts down, your data will be right here when you return.
+                      </p>
+                    </section>
+
+                    <section className="space-y-3">
+                      <h4 className="text-xs font-black text-indigo-600 uppercase tracking-widest flex items-center gap-2">
+                        <div className="w-1.5 h-1.5 bg-indigo-600 rounded-full" /> Smart Math Inputs
+                      </h4>
+                      <p className="text-sm text-slate-600 leading-relaxed">
+                        You can type math directly into any number field! For example, typing <code className="bg-slate-100 px-1.5 py-0.5 rounded text-indigo-600 font-bold">500*3 + 200</code> will automatically calculate the result.
+                      </p>
+                    </section>
+
+                    <section className="space-y-3">
+                      <h4 className="text-xs font-black text-indigo-600 uppercase tracking-widest flex items-center gap-2">
+                        <div className="w-1.5 h-1.5 bg-indigo-600 rounded-full" /> Layout Controls
+                      </h4>
+                      <p className="text-sm text-slate-600 leading-relaxed">
+                        Use the <strong>Layout Controls</strong> at the bottom to hide or show sections (Logo, Header, Date, etc.). You can also rename any section title by clicking on it.
+                      </p>
+                    </section>
+
+                    <section className="space-y-3">
+                      <h4 className="text-xs font-black text-indigo-600 uppercase tracking-widest flex items-center gap-2">
+                        <div className="w-1.5 h-1.5 bg-indigo-600 rounded-full" /> Exporting
+                      </h4>
+                      <p className="text-sm text-slate-600 leading-relaxed">
+                        Save your report as a <strong>Word</strong> document, or <strong>Print</strong> it directly. All formats are optimized to look identical to the app.
+                      </p>
+                    </section>
+
+                    <section className="space-y-3">
+                      <h4 className="text-xs font-black text-indigo-600 uppercase tracking-widest flex items-center gap-2">
+                        <div className="w-1.5 h-1.5 bg-indigo-600 rounded-full" /> Desktop Shortcut
+                      </h4>
+                      <p className="text-sm text-slate-600 leading-relaxed">
+                        Click <strong>"Create Shortcut"</strong> to download a small file. Move this file to your Desktop. Double-clicking it will always open this app with your latest data ready.
+                      </p>
+                    </section>
+                  </div>
+
+                  <button 
+                    onClick={() => setShowInstructions(false)}
+                    className="w-full mt-8 py-4 bg-slate-900 text-white rounded-2xl font-black text-xs uppercase tracking-[0.2em] hover:bg-slate-800 transition-all shadow-xl"
+                  >
+                    Got it, thanks!
+                  </button>
+                </div>
               </motion.div>
             </div>
           )}
