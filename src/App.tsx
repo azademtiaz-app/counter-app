@@ -1004,15 +1004,22 @@ export default function App() {
             <title>Cash Report - ${state.date}</title>
             ${styles}
             <style>
+              @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&family=Dancing+Script:wght@400;700&display=swap');
               @import "tailwindcss";
-              @page { size: auto; margin: 10mm; }
-              body { background: white !important; padding: 0 !important; margin: 0 !important; }
+              @page { size: auto; margin: 5mm; }
+              body { background: white !important; padding: 0 !important; margin: 0 !important; font-size: 9pt !important; font-family: "Inter", sans-serif !important; overflow: visible !important; }
               .print-hidden { display: none !important; }
               button { display: none !important; }
               input, textarea { border: none !important; background: transparent !important; padding: 0 !important; }
-              .shadow-xl, .shadow-sm { box-shadow: none !important; }
-              .rounded-2xl, .rounded-xl, .rounded-[2rem], .rounded-[2.5rem] { border-radius: 0 !important; }
-              .bg-slate-50, .bg-slate-100 { background: transparent !important; }
+              .shadow-xl, .shadow-sm, .shadow-2xl { box-shadow: none !important; }
+              
+              /* Keep design consistent with app */
+              .rounded-2xl, .rounded-xl, .rounded-[2rem], .rounded-[2.5rem], .rounded-3xl { border-radius: 2.5rem !important; }
+              .bg-slate-50, .bg-slate-100, .bg-indigo-50, .bg-white { background: transparent !important; }
+              
+              /* Prevent cropping */
+              .overflow-hidden { overflow: visible !important; }
+              
               * { 
                 color-adjust: exact !important; 
                 -webkit-print-color-adjust: exact !important;
@@ -1021,19 +1028,33 @@ export default function App() {
               }
               *::-webkit-scrollbar { display: none !important; }
               .overflow-x-auto { overflow: visible !important; }
-              table { border-collapse: collapse !important; width: 100% !important; border: 1px solid #cbd5e1 !important; border-radius: 0 !important; overflow: visible !important; }
-              th { border: 1px solid #cbd5e1 !important; background-color: #f8fafc !important; padding: 8pt 12pt !important; }
-              td { border: 1px solid #cbd5e1 !important; padding: 6pt 12pt !important; }
-              .print-total { font-size: 10.5pt !important; font-weight: 900 !important; text-transform: uppercase !important; }
+              table { border-collapse: collapse !important; width: 100% !important; border: 1px solid #cbd5e1 !important; border-radius: 0 !important; overflow: visible !important; margin-bottom: 0.5rem !important; }
+              th { border: 1px solid #cbd5e1 !important; background-color: #f8fafc !important; padding: 4pt 8pt !important; font-size: 8pt !important; }
+              td { border: 1px solid #cbd5e1 !important; padding: 3pt 8pt !important; font-size: 9pt !important; }
+              .print-total { font-size: 9.5pt !important; font-weight: 900 !important; text-transform: uppercase !important; }
               
-              /* Force single page logic */
-              .space-y-20 { margin-top: 2rem !important; }
-              .p-12 { padding: 1.5rem !important; }
-              .gap-12 { gap: 1.5rem !important; }
+              /* Force single page logic - Targeting current UI classes */
+              .space-y-8, .space-y-6, .space-y-4, .space-y-3 { margin-top: 0.25rem !important; margin-bottom: 0.25rem !important; }
+              .p-12, .p-10, .p-8, .p-6 { padding: 0.5rem !important; }
+              .gap-12, .gap-10, .gap-8, .gap-6, .gap-4 { gap: 0.5rem !important; }
+              .pt-12, .pt-8 { pt: 0.25rem !important; border-top-width: 1px !important; }
+              
+              /* Signature Section Compactness */
+              .h-24, .h-20, .h-16 { height: 3.5rem !important; }
+              .pb-3 { padding-bottom: 0.5rem !important; }
+              .mb-8, .mb-6, .mb-4 { margin-bottom: 0.5rem !important; }
+              
+              /* Hide decorative elements in print */
+              .rounded-bl-full { display: none !important; }
+              
+              /* Header Compactness */
+              .max-w-md { max-width: none !important; }
+              .text-2xl { font-size: 14pt !important; }
+              .py-2.5 { padding-top: 0 !important; padding-bottom: 0 !important; }
             </style>
           </head>
           <body>
-            <div class="max-w-none m-0 p-8">
+            <div class="max-w-none m-0 p-8 overflow-visible">
               ${content}
             </div>
             <script>
@@ -1614,7 +1635,7 @@ export default function App() {
                     )}
                   </AnimatePresence>
 
-                  <div className="max-w-md mx-auto space-y-6">
+                  <div className="max-w-md mx-auto space-y-3">
                     {/* Report Title Section */}
                     <AnimatePresence>
                       {state.config.showReportTitle && (
@@ -1623,7 +1644,7 @@ export default function App() {
                           animate={{ opacity: 1, y: 0 }}
                           exit={{ opacity: 0, y: -20 }}
                         >
-                          <div className="space-y-3">
+                          <div className="space-y-1">
                             <SectionHeader 
                               title="REPORT HEADER"
                               icon={Edit3}
@@ -1656,7 +1677,7 @@ export default function App() {
                           animate={{ opacity: 1, y: 0 }}
                           exit={{ opacity: 0, y: -20 }}
                         >
-                          <div className="space-y-3">
+                          <div className="space-y-1">
                             <SectionHeader 
                               title="REPORT DATE"
                               icon={Calendar}
@@ -1716,11 +1737,11 @@ export default function App() {
                     </AnimatePresence>
                   </div>
                 </div>
-                <div className="p-8 space-y-8 print:p-6 print:space-y-4">
+                <div className="p-6 space-y-4 print:p-6 print:space-y-4">
                   {/* Layout Controls - Top buttons removed */}
 
                   {/* Main Sections Container */}
-                  <div className="flex flex-wrap gap-6 print:grid print:grid-cols-2 print:gap-4">
+                  <div className="flex flex-wrap gap-4 print:grid print:grid-cols-2 print:gap-4">
                     
                     {/* Cash Section */}
                     <AnimatePresence>
@@ -1732,7 +1753,7 @@ export default function App() {
                           className="flex-1 min-w-[45%]"
                           data-nav-section="cash"
                         >
-                          <div className="h-full flex flex-col space-y-6">
+                          <div className="h-full flex flex-col space-y-3">
                             <SectionHeader 
                               icon={Banknote}
                               title={state.config.cashSectionTitle}
@@ -1752,9 +1773,9 @@ export default function App() {
                                 <table className="w-full text-sm text-left">
                                   <thead className="bg-slate-50 text-slate-500 uppercase text-[9px] tracking-[0.2em] font-black border-b border-slate-200">
                                     <tr>
-                                      <th className="px-4 sm:px-6 py-5 print:py-1">Note</th>
-                                      <th className="px-4 sm:px-6 py-5 text-center print:py-1">Qty</th>
-                                      <th className="px-4 sm:px-6 py-5 text-right print:py-1">Total</th>
+                                      <th className="px-4 sm:px-6 py-3 print:py-1">Note</th>
+                                      <th className="px-4 sm:px-6 py-3 text-center print:py-1">Qty</th>
+                                      <th className="px-4 sm:px-6 py-3 text-right print:py-1">Total</th>
                                       <th className="w-10 print:hidden"></th>
                                     </tr>
                                   </thead>
@@ -1769,7 +1790,7 @@ export default function App() {
                             exit={{ opacity: 0, x: -20 }}
                             className="group hover:bg-indigo-50/30 transition-colors"
                           >
-                            <td className="px-4 sm:px-6 py-4 print:py-1">
+                            <td className="px-4 sm:px-6 py-2 print:py-1">
                               <MathInput 
                                 className="nav-input w-full bg-transparent focus:outline-none font-black text-slate-900 print:text-xs"
                                 value={row.denomination || ''}
@@ -1782,7 +1803,7 @@ export default function App() {
                                 }}
                               />
                             </td>
-                            <td className="px-4 py-4 text-center print:py-1">
+                            <td className="px-4 py-2 text-center print:py-1">
                               <MathInput 
                                 className="nav-input w-full mx-auto text-center bg-white border border-slate-100 rounded-xl py-1.5 focus:border-indigo-400 focus:outline-none font-mono font-black text-slate-900 shadow-sm print:bg-transparent print:border-none print:shadow-none"
                                 value={row.qty || ''}
@@ -1795,7 +1816,7 @@ export default function App() {
                                 }}
                               />
                             </td>
-                            <td className="px-4 sm:px-6 py-4 text-right font-mono font-black text-slate-900 print:py-1">
+                            <td className="px-4 sm:px-6 py-2 text-right font-mono font-black text-slate-900 print:py-1">
                               {(row.denomination * row.qty).toLocaleString('en-IN')}
                             </td>
                             <td className="px-2 print:hidden">
@@ -1810,8 +1831,8 @@ export default function App() {
                         ))}
                       </AnimatePresence>
                           <tr className="bg-slate-50 text-slate-900 font-black border-t border-slate-200">
-                            <td colSpan={2} className="px-4 sm:px-6 py-5 uppercase tracking-tight text-sm font-black print:py-1.5 print-total">CASH TOTAL</td>
-                            <td className="px-4 sm:px-6 py-5 text-right uppercase text-sm font-black tracking-tight print:py-1.5 print-total">{cashTotal.toLocaleString('en-IN')}</td>
+                            <td colSpan={2} className="px-4 sm:px-6 py-3 uppercase tracking-tight text-sm font-black print:py-1.5 print-total">CASH TOTAL</td>
+                            <td className="px-4 sm:px-6 py-3 text-right uppercase text-sm font-black tracking-tight print:py-1.5 print-total">{cashTotal.toLocaleString('en-IN')}</td>
                             <td className="print:hidden"></td>
                           </tr>
                           <AnimatePresence mode="popLayout">
@@ -1824,7 +1845,7 @@ export default function App() {
                             exit={{ opacity: 0, x: -20 }}
                             className="group hover:bg-slate-50/50 transition-colors"
                           >
-                            <td className="px-4 sm:px-6 py-4 print:py-1 min-w-[120px]">
+                            <td className="px-4 sm:px-6 py-2 print:py-1 min-w-[120px]">
                               <input 
                                 type="text" 
                                 placeholder="Label"
@@ -1839,7 +1860,7 @@ export default function App() {
                                 onKeyDown={handleKeyDown}
                               />
                             </td>
-                            <td className="px-4 sm:px-6 py-4 text-center print:py-1">
+                            <td className="px-4 sm:px-6 py-2 text-center print:py-1">
                               <MathInput 
                                 className="nav-input w-full mx-auto text-center bg-transparent focus:outline-none font-black text-slate-800 placeholder:text-slate-400 print:text-xs"
                                 value={row.qty || ''}
@@ -1852,7 +1873,7 @@ export default function App() {
                                 }}
                               />
                             </td>
-                            <td className="px-4 sm:px-6 py-4 text-right print:py-1">
+                            <td className="px-4 sm:px-6 py-2 text-right print:py-1">
                               <MathInput 
                                 className="nav-input w-full text-right bg-transparent focus:outline-none font-black text-slate-900 placeholder:text-slate-400 print:text-xs"
                                 value={row.amount || ''}
@@ -1876,13 +1897,13 @@ export default function App() {
                         ))}
                       </AnimatePresence>
                       <tr className="bg-slate-50 text-slate-900 font-black border-t border-slate-200">
-                        <td colSpan={2} className="px-4 sm:px-6 py-5 uppercase tracking-tight text-sm font-black print:py-1.5 print-total">
+                        <td colSpan={2} className="px-4 sm:px-6 py-3 uppercase tracking-tight text-sm font-black print:py-1.5 print-total">
                           <div className="flex items-center gap-4">
                             GRAND TOTAL 
                             <button onClick={() => addExtraRow(1)} className="text-[9px] font-black bg-indigo-600 text-white px-3 py-1 rounded-full hover:bg-indigo-700 transition-all shadow-md shadow-indigo-200 print:hidden">+ ADD ROW</button>
                           </div>
                         </td>
-                        <td className="px-4 sm:px-6 py-5 text-right uppercase text-sm font-black tracking-tight print:py-1.5 print-total">{grandTotal.toLocaleString('en-IN')}</td>
+                        <td className="px-4 sm:px-6 py-3 text-right uppercase text-sm font-black tracking-tight print:py-1.5 print-total">{grandTotal.toLocaleString('en-IN')}</td>
                         <td className="print:hidden"></td>
                       </tr>
                     </tbody>
@@ -1923,13 +1944,13 @@ export default function App() {
                           <table className="w-full text-sm text-left">
                             <thead className="bg-slate-50 text-slate-500 uppercase text-[9px] tracking-[0.2em] font-black border-b border-slate-200">
                               <tr>
-                                <th className="px-4 sm:px-6 py-5 print:py-1">
+                                <th className="px-4 sm:px-6 py-3 print:py-1">
                                   <EditableTableLabel 
                                     value={state.config.outletColumnLabel}
                                     onChange={(val) => updateState(prev => ({ ...prev, config: { ...prev.config, outletColumnLabel: val } }))}
                                   />
                                 </th>
-                                <th className="px-4 sm:px-6 py-5 text-right print:py-1">Amount</th>
+                                <th className="px-4 sm:px-6 py-3 text-right print:py-1">Amount</th>
                                 <th className="w-10 print:hidden"></th>
                               </tr>
                             </thead>
@@ -1944,7 +1965,7 @@ export default function App() {
                                 exit={{ opacity: 0, x: 20 }}
                                 className="group hover:bg-indigo-50/30 transition-colors"
                               >
-                                <td className="px-4 sm:px-6 py-4 print:py-1 min-w-[120px]">
+                                <td className="px-4 sm:px-6 py-2 print:py-1 min-w-[120px]">
                                   <input 
                                     type="text" 
                                     placeholder="Outlet name"
@@ -1959,7 +1980,7 @@ export default function App() {
                                     onKeyDown={handleKeyDown}
                                   />
                                 </td>
-                                <td className="px-4 sm:px-6 py-4 text-right print:py-1">
+                                <td className="px-4 sm:px-6 py-2 text-right print:py-1">
                                   <MathInput 
                                     className="nav-input w-full text-right bg-transparent focus:outline-none font-mono font-black text-slate-900 print:text-xs"
                                     value={row.amount || ''}
@@ -1983,18 +2004,18 @@ export default function App() {
                             ))}
                           </AnimatePresence>
                           <tr className="bg-slate-50 text-slate-900 font-black border-t border-slate-200">
-                            <td className="px-4 sm:px-6 py-5 uppercase tracking-tight text-sm font-black print:py-1.5 print-total">
+                            <td className="px-4 sm:px-6 py-3 uppercase tracking-tight text-sm font-black print:py-1.5 print-total">
                               <EditableTableLabel 
                                 value={state.config.outletTotalLabel}
                                 onChange={(val) => updateState(prev => ({ ...prev, config: { ...prev.config, outletTotalLabel: val } }))}
                               />
                             </td>
-                            <td className="px-4 sm:px-6 py-5 text-right uppercase text-sm font-black tracking-tight print:py-1.5 print-total">{outletTotal.toLocaleString('en-IN')}</td>
+                            <td className="px-4 sm:px-6 py-3 text-right uppercase text-sm font-black tracking-tight print:py-1.5 print-total">{outletTotal.toLocaleString('en-IN')}</td>
                             <td></td>
                           </tr>
                           {state.config.showBalanceRow && (
                             <tr className="bg-white font-black border-t border-slate-200">
-                              <td className="px-4 sm:px-6 py-5 text-slate-700 uppercase tracking-tight text-sm font-black print:py-1.5 print-total">
+                              <td className="px-4 sm:px-6 py-3 text-slate-700 uppercase tracking-tight text-sm font-black print:py-1.5 print-total">
                                 <div className="flex items-center gap-4">
                                   <div className={cn(
                                     "w-3 h-3 rounded-full shadow-sm",
@@ -2010,7 +2031,7 @@ export default function App() {
                                 </div>
                               </td>
                               <td className={cn(
-                                "px-4 sm:px-6 py-5 text-right uppercase text-sm font-black tracking-tight print:py-1.5 print-total",
+                                "px-4 sm:px-6 py-3 text-right uppercase text-sm font-black tracking-tight print:py-1.5 print-total",
                                 balance > 0 ? 'text-emerald-600' : balance < 0 ? 'text-rose-600' : 'text-slate-700'
                               )}>
                                 {balance > 0 ? `+${balance.toLocaleString('en-IN')}` : balance.toLocaleString('en-IN')}
@@ -2059,9 +2080,11 @@ export default function App() {
                           initial={{ opacity: 0, scale: 0.95 }}
                           animate={{ opacity: 1, scale: 1 }}
                           exit={{ opacity: 0, scale: 0.95 }}
-                          className="space-y-8 group relative p-10 bg-white rounded-[2.5rem] border border-slate-100 shadow-sm hover:shadow-2xl hover:shadow-indigo-500/10 transition-all duration-500 overflow-hidden print:p-4 print:space-y-4"
+                          className="space-y-4 group relative p-10 bg-white rounded-[2.5rem] border border-slate-100 shadow-sm hover:shadow-2xl hover:shadow-indigo-500/10 transition-all duration-500 overflow-visible print:p-8 print:space-y-4"
                         >
-                          <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-50/30 rounded-bl-full -mr-16 -mt-16 transition-all group-hover:bg-indigo-100/50" />
+                          <div className="absolute inset-0 rounded-[2.5rem] overflow-hidden pointer-events-none print:hidden">
+                            <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-50/30 rounded-bl-full -mr-16 -mt-16 transition-all group-hover:bg-indigo-100/50" />
+                          </div>
                           
                           <button 
                             onClick={() => {
@@ -2075,13 +2098,13 @@ export default function App() {
                           >
                             <Trash2 size={14} />
                           </button>
-                                              <div className="space-y-3 print:space-y-1">
-                            <label className="text-[9px] font-black text-slate-400 uppercase tracking-[0.3em] print:text-[7px]">Name</label>
+                                              <div className="space-y-1 print:space-y-1">
+                            <label className="text-[9px] font-bold text-slate-400 uppercase tracking-[0.3em] leading-tight block print:text-[7px]">Name</label>
                             <input 
                               type="text" 
                               placeholder="Type name..."
                               className={cn(
-                                "nav-input w-full bg-transparent border-b-2 border-slate-200 py-2 focus:outline-none focus:border-indigo-500 transition-all text-sm font-bold text-slate-900 placeholder:text-slate-300 print:text-xs print:py-0",
+                                "nav-input w-full bg-transparent border-b-2 border-slate-200 py-2 focus:outline-none focus:border-indigo-500 transition-all text-sm font-medium text-slate-900 placeholder:text-slate-300 print:text-xs print:py-0",
                                 state.isSignaturesLocked && "opacity-70 cursor-not-allowed border-slate-100"
                               )}
                               value={row.name}
@@ -2095,13 +2118,13 @@ export default function App() {
                               onKeyDown={handleKeyDown}
                             />
                           </div>
-                          <div className="space-y-3 print:space-y-1">
-                            <label className="text-[9px] font-black text-slate-400 uppercase tracking-[0.3em] print:text-[7px]">Designation</label>
+                          <div className="space-y-1 print:space-y-1">
+                            <label className="text-[9px] font-bold text-slate-400 uppercase tracking-[0.3em] leading-tight block print:text-[7px]">Designation</label>
                             <input 
                               type="text" 
                               placeholder="Type title..."
                               className={cn(
-                                "nav-input w-full bg-transparent border-b-2 border-slate-200 py-2 focus:outline-none focus:border-indigo-500 transition-all text-sm font-bold text-slate-600 placeholder:text-slate-300 print:text-xs print:py-0",
+                                "nav-input w-full bg-transparent border-b-2 border-slate-200 py-2 focus:outline-none focus:border-indigo-500 transition-all text-sm font-medium text-slate-600 placeholder:text-slate-300 print:text-xs print:py-0",
                                 state.isSignaturesLocked && "opacity-70 cursor-not-allowed border-slate-100"
                               )}
                               value={row.designation}
@@ -2115,9 +2138,9 @@ export default function App() {
                               onKeyDown={handleKeyDown}
                             />
                           </div>
-                          <div className="space-y-6 print:space-y-1">
-                            <label className="text-[9px] font-black text-slate-400 uppercase tracking-[0.3em] block text-center print:text-[7px]">Signature</label>
-                            <div className="relative h-24 flex items-end justify-center pb-3 print:h-12">
+                          <div className="space-y-2 print:space-y-1">
+                            <label className="text-[9px] font-bold text-slate-400 uppercase tracking-[0.3em] block text-center leading-tight print:text-[7px]">Signature</label>
+                            <div className="relative h-24 flex items-end justify-center pb-3 print:h-20">
                               <div className="absolute inset-0 flex items-center justify-center opacity-[0.05] pointer-events-none">
                                 <PenTool size={64} className="text-indigo-500" />
                               </div>
@@ -2146,7 +2169,7 @@ export default function App() {
                   className="w-full pt-8 border-t border-slate-100 print:pt-4"
                   data-nav-section="notes"
                 >
-                  <div className="space-y-6">
+                  <div className="space-y-3">
                     <SectionHeader 
                       title={state.config.notesSectionTitle}
                       onTitleChange={(val) => updateState(prev => ({ ...prev, config: { ...prev.config, notesSectionTitle: val } }))}
@@ -2156,7 +2179,7 @@ export default function App() {
                       onToggle={() => updateState(prev => ({ ...prev, config: { ...prev.config, showNotesSection: false } }))}
                       isVisible={state.config.showNotesSection}
                     />
-                      <div className="space-y-3">
+                      <div className="space-y-1">
                         <AnimatePresence mode="popLayout">
                           {state.noteRows.map((row, index) => (
                             <motion.div 
@@ -2176,7 +2199,7 @@ export default function App() {
                               <input 
                                 type="text"
                                 placeholder="Add a note..."
-                                className="nav-input flex-grow bg-transparent border-b border-slate-100 focus:border-indigo-400 focus:outline-none py-2 text-sm font-bold text-slate-700 placeholder:text-slate-300 transition-all print:text-xs print:py-0"
+                                className="nav-input flex-grow bg-transparent border-b border-slate-100 focus:border-indigo-400 focus:outline-none py-1 text-sm font-bold text-slate-700 placeholder:text-slate-300 transition-all print:text-xs print:py-0"
                                 value={row.text}
                                 onChange={(e) => {
                                   updateState(prev => ({

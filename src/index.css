@@ -60,7 +60,7 @@
   }
 
   .rounded-2xl, .rounded-xl, .rounded-lg, .rounded-3xl {
-    border-radius: 0 !important;
+    /* border-radius: 0 !important; */
   }
 
   input, textarea {
@@ -68,7 +68,7 @@
     background: transparent !important;
     padding: 0 !important;
     color: black !important;
-    font-weight: 700 !important;
+    font-weight: inherit !important;
     font-size: 10pt !important;
   }
 
@@ -85,7 +85,7 @@
     -webkit-print-color-adjust: exact !important;
     font-size: 8pt !important;
     padding: 4px !important;
-    font-weight: 800 !important;
+    font-weight: 700 !important;
   }
 
   td {
@@ -93,7 +93,7 @@
     font-size: 9pt !important;
     padding: 4px !important;
     color: black !important;
-    font-weight: 600 !important;
+    font-weight: inherit !important;
   }
 
   .bg-slate-50, .bg-slate-100, .bg-indigo-50, .bg-slate-900 {
