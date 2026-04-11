@@ -142,6 +142,15 @@ const getBusinessDate = () => {
   return format(now, 'yyyy-MM-dd');
 };
 
+const getPersistentLogo = () => {
+  if (typeof window === 'undefined') return null;
+  try {
+    return localStorage.getItem('app_logo_persistent');
+  } catch (e) {
+    return null;
+  }
+};
+
 const initialState: AppState = {
   headerNote: '',
   date: getBusinessDate(),
@@ -172,7 +181,7 @@ const initialState: AppState = {
   noteRows: [
     { id: '1', text: '' },
   ],
-  logo: null,
+  logo: getPersistentLogo(),
   isLogoLocked: false,
   isSignaturesLocked: false,
   gridRatio: 50,
@@ -651,10 +660,25 @@ export default function App() {
               config: mergedConfig,
               date: format(new Date(), 'yyyy-MM-dd')
             };
+            
+            // Load persistent logo if draft doesn't have one
+            if (!mergedState.logo) {
+              const persistentLogo = localStorage.getItem('app_logo_persistent');
+              if (persistentLogo) {
+                mergedState.logo = persistentLogo;
+              }
+            }
+            
             setState(mergedState);
           }
         } catch (e) {
           console.error('Failed to parse draft', e);
+        }
+      } else {
+        // No draft, check for persistent logo
+        const persistentLogo = localStorage.getItem('app_logo_persistent');
+        if (persistentLogo) {
+          setState(prev => ({ ...prev, logo: persistentLogo }));
         }
       }
     }
@@ -759,6 +783,17 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [state]);
 
+  // Persistent Logo Effect - Only Save, Never Auto-Remove
+  useEffect(() => {
+    if (state.logo) {
+      try {
+        localStorage.setItem('app_logo_persistent', state.logo);
+      } catch (e) {
+        console.error("Failed to save logo to persistent storage", e);
+      }
+    }
+  }, [state.logo]);
+
   const saveReport = () => {
     setIsSaving(true);
     setTimeout(() => {
@@ -834,7 +869,36 @@ export default function App() {
     if (file) {
       const reader = new FileReader();
       reader.onloadend = () => {
-        updateState(prev => ({ ...prev, logo: reader.result as string }));
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          let width = img.width;
+          let height = img.height;
+          
+          // Max dimensions for logo to ensure it fits in localStorage
+          const MAX_WIDTH = 800;
+          const MAX_HEIGHT = 400;
+          
+          if (width > MAX_WIDTH) {
+            height *= MAX_WIDTH / width;
+            width = MAX_WIDTH;
+          }
+          if (height > MAX_HEIGHT) {
+            width *= MAX_HEIGHT / height;
+            height = MAX_HEIGHT;
+          }
+          
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            ctx.drawImage(img, 0, 0, width, height);
+            // Use webp with 0.7 quality for excellent compression
+            const compressedData = canvas.toDataURL('image/webp', 0.7);
+            updateState(prev => ({ ...prev, logo: compressedData }));
+          }
+        };
+        img.src = reader.result as string;
       };
       reader.readAsDataURL(file);
     }
@@ -893,7 +957,7 @@ export default function App() {
   const resetAll = () => {
     updateState(prev => ({
       ...JSON.parse(JSON.stringify(initialState)),
-      logo: prev.isLogoLocked ? prev.logo : initialState.logo,
+      logo: prev.isLogoLocked ? prev.logo : null,
       isLogoLocked: prev.isLogoLocked,
       signatureRows: prev.isSignaturesLocked ? prev.signatureRows : initialState.signatureRows,
       isSignaturesLocked: prev.isSignaturesLocked,
@@ -1584,13 +1648,25 @@ export default function App() {
                             icon={Upload}
                             onToggle={() => updateState(prev => ({ ...prev, config: { ...prev.config, showLogo: false } }))}
                             isVisible={state.config.showLogo}
-                            onReset={() => updateState(prev => ({ ...prev, logo: prev.isLogoLocked ? prev.logo : null }))}
+                            onReset={() => {
+                              if (state.isLogoLocked) {
+                                showNotification("Logo is locked", "error");
+                                return;
+                              }
+                              updateState(prev => ({ ...prev, logo: null }));
+                              localStorage.removeItem('app_logo_persistent');
+                            }}
                             onLock={() => updateState(prev => ({ ...prev, isLogoLocked: !prev.isLogoLocked }))}
                             isLocked={state.isLogoLocked}
                             hideTitleInPrint
                           />
                           <label className="cursor-pointer group relative block w-full">
-                            <input type="file" className="hidden" onChange={handleLogoUpload} accept="image/*" />
+                            <input 
+                              type="file" 
+                              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" 
+                              onChange={handleLogoUpload} 
+                              accept="image/*" 
+                            />
                             <div className={cn(
                               "w-full h-32 rounded-3xl flex items-center justify-center transition-all duration-500 overflow-hidden print:h-32",
                               !state.logo ? "border-2 border-dashed border-slate-200 text-slate-400 group-hover:border-indigo-400 group-hover:text-indigo-500 group-hover:bg-indigo-50/30 print:border-none" : "bg-white shadow-sm print:shadow-none print:bg-transparent"
@@ -2003,7 +2079,7 @@ export default function App() {
                               </motion.tr>
                             ))}
                           </AnimatePresence>
-                          <tr className="bg-slate-50 text-slate-900 font-black border-t border-slate-200">
+                           <tr className="bg-slate-50 text-slate-900 font-black border-t border-slate-200">
                             <td className="px-4 sm:px-6 py-3 uppercase tracking-tight text-sm font-black print:py-1.5 print-total">
                               <EditableTableLabel 
                                 value={state.config.outletTotalLabel}
@@ -2011,7 +2087,7 @@ export default function App() {
                               />
                             </td>
                             <td className="px-4 sm:px-6 py-3 text-right uppercase text-sm font-black tracking-tight print:py-1.5 print-total">{outletTotal.toLocaleString('en-IN')}</td>
-                            <td></td>
+                            <td className="print:hidden"></td>
                           </tr>
                           {state.config.showBalanceRow && (
                             <tr className="bg-white font-black border-t border-slate-200">
@@ -2036,7 +2112,7 @@ export default function App() {
                               )}>
                                 {balance > 0 ? `+${balance.toLocaleString('en-IN')}` : balance.toLocaleString('en-IN')}
                               </td>
-                              <td></td>
+                              <td className="print:hidden"></td>
                             </tr>
                           )}
                         </tbody>
@@ -2080,9 +2156,9 @@ export default function App() {
                           initial={{ opacity: 0, scale: 0.95 }}
                           animate={{ opacity: 1, scale: 1 }}
                           exit={{ opacity: 0, scale: 0.95 }}
-                          className="space-y-4 group relative p-10 bg-white rounded-[2.5rem] border border-slate-100 shadow-sm hover:shadow-2xl hover:shadow-indigo-500/10 transition-all duration-500 overflow-visible print:p-8 print:space-y-4"
+                          className="space-y-4 group relative p-4 bg-white rounded-2xl border border-slate-100 shadow-sm hover:shadow-2xl hover:shadow-indigo-500/10 transition-all duration-500 overflow-visible print:p-4 print:space-y-4"
                         >
-                          <div className="absolute inset-0 rounded-[2.5rem] overflow-hidden pointer-events-none print:hidden">
+                          <div className="absolute inset-0 rounded-2xl overflow-hidden pointer-events-none">
                             <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-50/30 rounded-bl-full -mr-16 -mt-16 transition-all group-hover:bg-indigo-100/50" />
                           </div>
                           
@@ -2140,12 +2216,12 @@ export default function App() {
                           </div>
                           <div className="space-y-2 print:space-y-1">
                             <label className="text-[9px] font-bold text-slate-400 uppercase tracking-[0.3em] block text-center leading-tight print:text-[7px]">Signature</label>
-                            <div className="relative h-24 flex items-end justify-center pb-3 print:h-20">
+                            <div className="relative h-14 flex items-end justify-center pb-2 print:h-14">
                               <div className="absolute inset-0 flex items-center justify-center opacity-[0.05] pointer-events-none">
                                 <PenTool size={64} className="text-indigo-500" />
                               </div>
                               <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                                <span className="font-signature text-3xl text-slate-200 opacity-50 select-none print:hidden">Sign here</span>
+                                <span className="font-signature text-2xl text-slate-200 opacity-50 select-none">Sign here</span>
                               </div>
                               <div className="w-full border-b-2 border-slate-200 border-dashed relative z-10"></div>
                             </div>
